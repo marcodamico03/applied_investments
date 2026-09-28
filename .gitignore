@@ -8,3 +8,10 @@ __pycache__/
 .env
 data/
 *.csv
+
+# WRDS data: licensed and too large for GitHub
+data/raw/
+data/interim/
+data/processed/
+Data/
+*.parquet
