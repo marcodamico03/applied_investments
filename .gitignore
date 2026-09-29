@@ -13,5 +13,4 @@ data/
 data/raw/
 data/interim/
 data/processed/
-Data/
 *.parquet
