@@ -1,0 +1,338 @@
+"""
+Strategy-agnostic cleaning of CRSP monthly and Compustat annual data.
+
+Run ONCE (and again only if you fix a data problem, never for a new strategy):
+    python <folder>/clean.py
+
+Outputs (Parquet, needs `pip install pyarrow`):
+    data/interim/crsp_clean.parquet       one row per stock-month (all eligible stocks)
+    data/interim/compustat_clean.parquet  one row per stock and formation year,
+                                          all accounting items + previous-year values
+
+No strategy signal is computed here. Signals live in src/signals/ and the two
+tables are merged on demand by src/data/panel.py (load_panel).
+"""
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+# ------------------------------------------------------------------------------
+# Paths (same as before: the folder must be called "data" in lowercase)
+# ------------------------------------------------------------------------------
+# Project folder = first folder above this file that contains data/raw
+_HERE = Path(__file__).resolve() if "__file__" in globals() else Path.cwd() / "x"
+BASE_DIR = next((p for p in _HERE.parents if (p / "data" / "raw").is_dir()), _HERE.parent.parent)
+RAW_DIR = BASE_DIR / "data" / "raw"
+INTERIM_DIR = BASE_DIR / "data" / "interim"
+INTERIM_DIR.mkdir(parents=True, exist_ok=True)
+
+US_EXCHANGES = ["N", "A", "Q"]  # NYSE, AMEX, NASDAQ
+FUND_REIT_SIC = [6720, 6722, 6723, 6724, 6725, 6726, 6798]
+
+# ------------------------------------------------------------------------------
+# Delisting returns (Shumway 1997).
+# Leave SHUMWAY_FILL = False, run the script once and read the "delisting check"
+# printout. If many delisting months have a missing return, set it to True.
+# SHUMWAY_ACTION_TYPES: None = fill every missing delisting return; otherwise a
+# list of DelActionType codes (the performance-related ones) to restrict it.
+# ------------------------------------------------------------------------------
+SHUMWAY_FILL = False
+SHUMWAY_ACTION_TYPES = None
+SHUMWAY_RET_NYSE_AMEX = -0.30
+SHUMWAY_RET_NASDAQ = -0.55
+
+# ------------------------------------------------------------------------------
+# Compustat columns. Items not in the file are reported and created as missing.
+# ------------------------------------------------------------------------------
+ID_COLS = [
+    "GVKEY", "LINKPRIM", "LIID", "LINKTYPE", "LPERMNO", "LPERMCO", "LINKDT",
+    "LINKENDDT", "datadate", "fyear", "indfmt", "consol", "popsrc", "datafmt",
+    "tic", "cusip", "conm", "sich",
+]
+ACCOUNTING_ITEMS = [
+    # Balance sheet
+    "at", "act", "che", "rect", "invt", "aco", "ppent", "ppegt", "intan", "gdwl",
+    "ivao", "ao", "lct", "ap", "dlc", "txp", "lco", "dltt", "txditc", "txdb",
+    "lo", "lt", "mib", "pstk", "pstkrv", "pstkl", "ceq", "seq", "re", "csho",
+    # Income statement
+    "sale", "revt", "cogs", "xsga", "xrd", "xad", "dp", "oibdp", "oiadp", "xint",
+    "pi", "txt", "ib", "ibc", "ni", "spi", "xido", "epspx", "dvc", "dvt", "dvp", "dv",
+    # Cash flow statement
+    "oancf", "ivncf", "fincf", "capx", "aqc", "sppe", "sstk", "prstkc", "dltis",
+    "dltr", "dpc",
+    # Other
+    "prcc_f", "emp",
+]
+# Every accounting item (plus book equity) also gets its previous fiscal year
+# value, stored as "<item>_lag" (e.g. at_lag, sale_lag, be_lag).
+LAG_ITEMS = ACCOUNTING_ITEMS + ["be"]
+
+
+# ------------------------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------------------------
+def column_is_in(df: pd.DataFrame, col: str, allowed: list, label: str) -> pd.Series:
+    """True/False per row: is df[col] one of the allowed values?
+    If the column does not exist, print a warning and return all True."""
+    if col not in df.columns:
+        print(f"  !! WARNING: column '{col}' not found, filter '{label}' NOT applied")
+        return pd.Series(True, index=df.index)
+    return df[col].isin(allowed)
+
+
+def filter_equal(df: pd.DataFrame, col: str, allowed, label: str) -> pd.DataFrame:
+    """Keep only the rows where df[col] is one of the allowed values."""
+    if not isinstance(allowed, (list, tuple, set)):
+        allowed = [allowed]
+    return df[column_is_in(df, col, list(allowed), label)]
+
+
+def text_columns_to_string(df: pd.DataFrame) -> pd.DataFrame:
+    """Parquet needs one type per column: store text columns as strings."""
+    for c in df.columns:
+        if pd.api.types.is_object_dtype(df[c]) or pd.api.types.is_string_dtype(df[c]):
+            df[c] = df[c].astype("string")
+    return df
+
+
+# ==============================================================================
+# 1. CRSP
+# ==============================================================================
+def clean_crsp(
+    input_file: Path = RAW_DIR / "crsp_monthly.csv",
+    output_file: Path = INTERIM_DIR / "crsp_clean.parquet",
+) -> pd.DataFrame:
+    print(f"\n[1/3] Loading CRSP Monthly Data from: {input_file}")
+    if not input_file.exists():
+        raise FileNotFoundError(f"Missing file: {input_file}")
+
+    crsp = pd.read_csv(input_file, low_memory=False)
+    print(f"  -> Raw records: {len(crsp):,}")
+
+    # A. Date parsing and key integrity
+    crsp["MthCalDt"] = pd.to_datetime(crsp["MthCalDt"], errors="coerce")
+    crsp = crsp.dropna(subset=["MthCalDt", "PERMNO"])
+    crsp["PERMNO"] = crsp["PERMNO"].astype(int)
+
+    # B. Duplicate PERMNO-months: keep the record with the dividend
+    if "DisDivAmt" in crsp.columns:
+        crsp = crsp.sort_values(by=["PERMNO", "MthCalDt", "DisDivAmt"], na_position="first")
+    else:
+        crsp = crsp.sort_values(by=["PERMNO", "MthCalDt"])
+    crsp = crsp.drop_duplicates(subset=["PERMNO", "MthCalDt"], keep="last")
+    print(f"  -> After deduplication on (PERMNO, MthCalDt): {len(crsp):,} rows")
+
+    # C. Common US equity on NYSE/AMEX/NASDAQ (no funds, no REITs)
+    if "SICCD" in crsp.columns:
+        crsp["SICCD"] = pd.to_numeric(crsp["SICCD"], errors="coerce")
+    eligible = pd.Series(True, index=crsp.index)
+    eligible &= column_is_in(crsp, "SecurityType", ["EQTY"], "equity only")
+    eligible &= column_is_in(crsp, "SecuritySubType", ["COM"], "common stock only")
+    eligible &= column_is_in(crsp, "ShareType", ["NS"], "no special share type")
+    eligible &= column_is_in(crsp, "USIncFlg", ["Y"], "US incorporated")
+    eligible &= column_is_in(crsp, "IssuerType", ["ACOR", "CORP"], "corporate issuer")
+    eligible &= column_is_in(crsp, "PrimaryExch", US_EXCHANGES, "NYSE/AMEX/NASDAQ")
+    if "SICCD" in crsp.columns:
+        eligible &= ~crsp["SICCD"].isin(FUND_REIT_SIC)
+    else:
+        print("  !! WARNING: column 'SICCD' not found, fund/REIT filter NOT applied")
+
+    # D. Keep the delisting month (eligible this month OR last month)
+    eligible_last_month = eligible.groupby(crsp["PERMNO"]).shift(1, fill_value=False)
+    crsp = crsp[eligible | eligible_last_month].copy()
+    print(f"  -> After common equity and exchange filters (delisting months kept): {len(crsp):,} rows")
+
+    # E. Prices, returns, shares, market cap
+    for col in ["MthPrc", "MthRet", "MthRetx", "ShrOut", "MthVol", "DisDivAmt"]:
+        if col in crsp.columns:
+            crsp[col] = pd.to_numeric(crsp[col], errors="coerce")
+    crsp["MthPrc"] = crsp["MthPrc"].abs()  # negative price = bid/ask average
+    crsp["mkt_cap"] = crsp["MthPrc"] * crsp["ShrOut"]
+
+    # F. NEW: delisting returns (diagnostic + optional Shumway fill)
+    crsp = delisting_check(crsp)
+
+    # G. NEW: firm-level market cap (all share classes of the same company)
+    if "PERMCO" in crsp.columns:
+        grp = crsp.groupby(["PERMCO", "MthCalDt"])["mkt_cap"]
+        crsp["me_firm"] = grp.transform("sum")
+        crsp.loc[grp.transform("count") == 0, "me_firm"] = np.nan  # all classes missing
+    else:
+        print("  !! WARNING: column 'PERMCO' not found, me_firm NOT computed")
+
+    # H. Fama-French annual alignment (July t to June t+1 -> formation_year t)
+    crsp["formation_year"] = np.where(
+        crsp["MthCalDt"].dt.month >= 7,
+        crsp["MthCalDt"].dt.year,
+        crsp["MthCalDt"].dt.year - 1,
+    )
+
+    # I. NEW: market cap unit check on Apple (PERMNO 14593)
+    apple = crsp.loc[crsp["PERMNO"] == 14593, ["MthCalDt", "mkt_cap"]].tail(1)
+    if len(apple):
+        d, m = apple.iloc[0]
+        print(f"  -> UNIT CHECK: Apple mkt_cap on {d:%Y-%m} = {m:,.0f}")
+        print("     Compare with Apple's real market cap: if mkt_cap is in thousands of")
+        print("     dollars, the number above is the dollar value divided by 1,000.")
+
+    keep_cols = [
+        "PERMNO", "PERMCO", "Ticker", "PrimaryExch", "SICCD", "MthCalDt",
+        "formation_year", "MthPrc", "MthRet", "MthRetx", "MthVol", "ShrOut",
+        "mkt_cap", "me_firm", "DisDivAmt", "MthDelFlg", "DelActionType",
+    ]
+    crsp_clean = crsp[[c for c in keep_cols if c in crsp.columns]].reset_index(drop=True)
+    crsp_clean = text_columns_to_string(crsp_clean)
+    crsp_clean.to_parquet(output_file, index=False)
+    print(f"  -> Saved clean CRSP to: {output_file} {crsp_clean.shape}")
+    return crsp_clean
+
+
+def delisting_check(crsp: pd.DataFrame) -> pd.DataFrame:
+    """Count delisting months with a missing return and, if SHUMWAY_FILL is
+    True, replace those missing returns with the Shumway (1997) values.
+
+    Delisting month = the last month a stock appears in our cleaned data, if it
+    is before the end of the sample (the stock stops trading or leaves
+    NYSE/AMEX/NASDAQ). This does not rely on the format of the MthDelFlg column.
+    crsp must be sorted by PERMNO and date (it is, after the deduplication)."""
+    is_last = ~crsp.duplicated(subset="PERMNO", keep="last")
+    delist = is_last & (crsp["MthCalDt"] < crsp["MthCalDt"].max())
+    missing = delist & crsp["MthRet"].isna()
+    print(f"  -> Delisting check: {delist.sum():,} delisting months, "
+          f"{missing.sum():,} with a missing return ({missing.sum() / max(delist.sum(), 1):.1%})")
+    if "MthDelFlg" in crsp.columns:
+        print("     MthDelFlg values in those months (for information):")
+        print(crsp.loc[delist, "MthDelFlg"].value_counts(dropna=False).head(5).to_string())
+    if "DelActionType" in crsp.columns and missing.any():
+        print("     DelActionType of the delisting months with a missing return:")
+        print(crsp.loc[missing, "DelActionType"].value_counts(dropna=False).to_string())
+
+    if SHUMWAY_FILL:
+        to_fill = missing
+        if SHUMWAY_ACTION_TYPES is not None and "DelActionType" in crsp.columns:
+            to_fill &= crsp["DelActionType"].isin(SHUMWAY_ACTION_TYPES)
+        # In the delisting month the exchange code changes, so use last month's
+        prev_exch = crsp.groupby("PERMNO")["PrimaryExch"].shift(1)
+        fill_value = np.where(prev_exch == "Q", SHUMWAY_RET_NASDAQ, SHUMWAY_RET_NYSE_AMEX)
+        crsp.loc[to_fill, "MthRet"] = fill_value[to_fill.to_numpy()]
+        print(f"     Shumway fill applied to {to_fill.sum():,} months")
+    return crsp
+
+
+# ==============================================================================
+# 2. COMPUSTAT
+# ==============================================================================
+def clean_compustat(
+    input_file: Path = RAW_DIR / "ccm_funda.csv",
+    output_file: Path = INTERIM_DIR / "compustat_clean.parquet",
+) -> pd.DataFrame:
+    print(f"\n[2/3] Loading Compustat Fundamentals Annual from: {input_file}")
+    if not input_file.exists():
+        raise FileNotFoundError(f"Missing file: {input_file}")
+
+    header_cols = pd.read_csv(input_file, nrows=0).columns.tolist()
+    wanted = ID_COLS + ACCOUNTING_ITEMS
+    missing = [c for c in wanted if c not in header_cols]
+    if missing:
+        print(f"  !! WARNING: not in the file (created as missing): {missing}")
+    comp = pd.read_csv(input_file, usecols=[c for c in wanted if c in header_cols], low_memory=False)
+    print(f"  -> Loaded {comp.shape[1]} columns across {len(comp):,} raw rows")
+
+    # A. Link filters and standard Compustat formats
+    comp = filter_equal(comp, "LINKPRIM", ["P", "C"], "primary links")
+    comp = filter_equal(comp, "LINKTYPE", ["LU", "LC"], "reliable link types")
+    comp = filter_equal(comp, "indfmt", "INDL", "industrial format")
+    comp = filter_equal(comp, "datafmt", "STD", "standardized data")
+    comp = filter_equal(comp, "popsrc", "D", "domestic")
+    comp = filter_equal(comp, "consol", "C", "consolidated")
+
+    # B. Accounting items as numbers (missing stays missing, no zero-filling)
+    comp = comp.copy()
+    for var in ACCOUNTING_ITEMS + ["sich"]:
+        comp[var] = pd.to_numeric(comp[var], errors="coerce") if var in comp.columns else np.nan
+
+    comp = comp[comp["at"] > 0]
+    print(f"  -> After link and positive-asset filters: {len(comp):,} rows")
+
+    # C. Link valid on the balance sheet date
+    comp["datadate"] = pd.to_datetime(comp["datadate"], errors="coerce")
+    comp["LINKDT"] = pd.to_datetime(comp["LINKDT"], errors="coerce")
+    comp["LINKENDDT"] = pd.to_datetime(
+        comp["LINKENDDT"].replace("E", "2099-12-31"), errors="coerce"
+    ).fillna(pd.Timestamp("2099-12-31"))
+    comp = comp[(comp["datadate"] >= comp["LINKDT"]) & (comp["datadate"] <= comp["LINKENDDT"])]
+
+    comp["LPERMNO"] = pd.to_numeric(comp["LPERMNO"], errors="coerce")
+    comp = comp.dropna(subset=["LPERMNO", "datadate"])
+    comp["LPERMNO"] = comp["LPERMNO"].astype(int)
+
+    # D. One record per (GVKEY, datadate), primary link preferred
+    comp = comp.sort_values(by=["GVKEY", "datadate", "LINKPRIM"])
+    comp = comp.drop_duplicates(subset=["GVKEY", "datadate"], keep="last")
+
+    # E. Fama-French book equity (universal convention, so it stays here)
+    pref_stock = (
+        comp["pstkrv"].combine_first(comp["pstkl"]).combine_first(comp["pstk"]).fillna(0.0)
+    )
+    stockholders_equity = (
+        comp["seq"]
+        .combine_first(comp["ceq"] + comp["pstk"])
+        .combine_first(comp["at"] - comp["lt"])
+    )
+    comp["be"] = stockholders_equity + comp["txditc"].fillna(0.0) - pref_stock
+    comp.loc[comp["be"] <= 0, "be"] = np.nan
+
+    # F. NEW: previous-year value of EVERY item (replaces the at_lag-only code).
+    # Only if the two fiscal years are consecutive (no gap in the data).
+    comp = comp.sort_values(by=["GVKEY", "fyear", "datadate"])
+    comp = comp.drop_duplicates(subset=["GVKEY", "fyear"], keep="last")
+    lagged = comp.groupby("GVKEY")[LAG_ITEMS].shift(1)
+    prev_fyear = comp.groupby("GVKEY")["fyear"].shift(1)
+    lagged[(comp["fyear"] - prev_fyear) != 1] = np.nan
+    lagged.columns = [f"{c}_lag" for c in LAG_ITEMS]
+    comp = pd.concat([comp, lagged], axis=1).copy()
+
+    # G. Formation year: fiscal year ending in calendar year t-1 is used from July t
+    comp["formation_year"] = comp["datadate"].dt.year + 1
+
+    # H. One record per stock and formation year (most recent report)
+    comp = comp.sort_values(by=["LPERMNO", "formation_year", "datadate"])
+    comp = comp.drop_duplicates(subset=["LPERMNO", "formation_year"], keep="last")
+
+    out_cols = (
+        ["GVKEY", "LPERMNO", "conm", "tic", "cusip", "sich", "datadate", "fyear", "formation_year"]
+        + ACCOUNTING_ITEMS + ["be"] + list(lagged.columns)
+    )
+    comp_clean = comp[[c for c in out_cols if c in comp.columns]].reset_index(drop=True)
+    comp_clean = text_columns_to_string(comp_clean)
+    comp_clean.to_parquet(output_file, index=False)
+    print(f"  -> Saved clean Compustat to: {output_file} {comp_clean.shape}")
+    return comp_clean
+
+
+# ==============================================================================
+# 3. MERGE CHECK (the merge itself is done on demand by src/data/panel.py)
+# ==============================================================================
+def check_merge(crsp: pd.DataFrame, comp: pd.DataFrame) -> None:
+    print("\n[3/3] Checking the CRSP-Compustat merge")
+    panel = crsp[["PERMNO", "MthCalDt", "formation_year"]].merge(
+        comp[["LPERMNO", "formation_year", "datadate"]],
+        left_on=["PERMNO", "formation_year"],
+        right_on=["LPERMNO", "formation_year"],
+        how="left",
+    )
+    lag = (
+        (panel["MthCalDt"].dt.year - panel["datadate"].dt.year) * 12
+        + (panel["MthCalDt"].dt.month - panel["datadate"].dt.month)
+    )
+    print(f"  -> Rows using accounting data less than 6 months old (should be 0): {(lag < 6).sum()}")
+    print(f"  -> Duplicate (PERMNO, MthCalDt) rows (should be 0): "
+          f"{panel.duplicated(subset=['PERMNO', 'MthCalDt']).sum()}")
+    print(f"  -> Share of stock-months with accounting data: {panel['datadate'].notna().mean():.1%}")
+
+
+if __name__ == "__main__":
+    crsp_clean = clean_crsp()
+    comp_clean = clean_compustat()
+    check_merge(crsp_clean, comp_clean)

@@ -1,17 +1,14 @@
-data/**
-!data/**/
-!data/**/.gitkeep
+# WRDS data: licensed and too large for GitHub (only the folder structure is kept)
+/data/**
+!/data/**/
+!/data/**/.gitkeep
+*.parquet
+*.csv
+
+# Python / environment
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
 .venv/
 .env
-data/
-*.csv
-
-# WRDS data: licensed and too large for GitHub
-data/raw/
-data/interim/
-data/processed/
-*.parquet
 .DS_Store
