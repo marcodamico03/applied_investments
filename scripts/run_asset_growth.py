@@ -1,6 +1,7 @@
 """
 Asset growth decile portfolios (Cooper, Gulen and Schill 2008), used to check
 that our portfolio engine reproduces the professor's numbers.
+Also the regression test of the pipeline: rerun it after any change to clean.py.
 Run from the project folder:  python scripts/run_asset_growth.py
 """
 import sys
@@ -11,9 +12,10 @@ import pandas as pd
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))  # lets Python find the "src" folder
 
+from src.data.panel import load_panel  # noqa: E402
 from src.portfolio.sorts import sort_portfolios, summarize  # noqa: E402
+from src.signals.asset_growth import COMPUSTAT_COLS, REBALANCE, asset_growth  # noqa: E402
 
-PANEL_FILE = BASE_DIR / "data" / "processed" / "monthly_panel_clean.csv"
 OUT_DIR = BASE_DIR / "results" / "asset_growth"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -29,16 +31,17 @@ PROF_AVG_VW = [1.14, 1.14, 1.08, 0.97, 0.98, 0.95, 0.97, 1.00, 0.99, 0.88, 0.26]
 pd.set_option("display.width", 200)
 pd.set_option("display.float_format", lambda x: f"{x:.2f}")
 
-# 1. Load only the columns we need
+# 1. Load only the columns we need and compute the signal
 print("Loading panel...")
-panel = pd.read_csv(
-    PANEL_FILE,
-    usecols=["PERMNO", "MthCalDt", "formation_year", "PrimaryExch", "MthRet", "mkt_cap", "asset_growth"],
+panel = load_panel(
+    crsp_cols=["PERMNO", "MthCalDt", "formation_year", "PrimaryExch", "MthRet", "mkt_cap"],
+    comp_cols=COMPUSTAT_COLS,
 )
+panel["asset_growth"] = asset_growth(panel)
 
 # 2. Build the portfolios
 print("Building asset growth deciles (annual rebalancing, NYSE breakpoints)...")
-res = sort_portfolios(panel, signal="asset_growth", n_portfolios=10, rebalance="annual")
+res = sort_portfolios(panel, signal="asset_growth", n_portfolios=10, rebalance=REBALANCE)
 
 ew = res["ew"].loc[START:END]
 vw = res["vw"].loc[START:END]

@@ -77,7 +77,7 @@ def regress(
     """Regress one portfolio on one factor model. Alpha is returned in % per month."""
     spec = MODELS[model]
     cols = spec["factors"] + [spec["rf"]]
-    data = pd.concat([returns.rename("ret"), factors[cols]], axis=1).loc[start:end].dropna()
+    data = pd.concat([returns.rename("ret"), factors[cols]], axis=1).sort_index().loc[start:end].dropna()
 
     y = data["ret"].to_numpy()
     if not long_short:
@@ -112,7 +112,7 @@ def grs_test(
     (divided by T, as in the original paper), mu: factor means."""
     spec = MODELS[model]
     cols = spec["factors"] + [spec["rf"]]
-    data = pd.concat([returns, factors[cols]], axis=1).loc[start:end].dropna()
+    data = pd.concat([returns, factors[cols]], axis=1).sort_index().loc[start:end].dropna()
 
     Y = data[returns.columns].to_numpy() - data[[spec["rf"]]].to_numpy()  # excess returns
     F = data[spec["factors"]].to_numpy()

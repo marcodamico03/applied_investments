@@ -3,7 +3,7 @@ Univariate portfolio sorts, following the method of the Applied Investments slid
 
 How it works, in plain words:
 1. At each formation date, keep the stocks that have a valid signal and a
-   positive market cap on that date.
+   positive market cap on that date (and pass the optional universe filters).
 2. Compute breakpoints (e.g. deciles) using NYSE stocks only.
 3. Put every stock (NYSE, AMEX, NASDAQ) into a portfolio: stocks with a signal
    <= the first breakpoint go in portfolio 1, and so on.
@@ -18,13 +18,22 @@ Two rebalancing modes:
 - "monthly": sort at the end of every month using that month's signal, hold
   the next month. Use this for market signals (momentum, volatility, ...).
   The signal in a row of month m must be known at the end of month m.
+
+Optional universe filters (applied at each formation date, all off by default):
+- min_price:          drop stocks with price below this value (e.g. 5)
+- min_nyse_size_pct:  drop stocks smaller than this NYSE market-cap percentile (e.g. 0.2)
+- exclude_sic:        list of (low, high) SIC ranges to drop, e.g. FINANCIALS + UTILITIES
 """
-from typing import Dict, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
 
 REQUIRED_COLS = ["PERMNO", "MthCalDt", "formation_year", "PrimaryExch", "MthRet", "mkt_cap"]
+OPTIONAL_COLS = ["MthPrc", "SICCD"]  # needed only by the filters
+
+FINANCIALS = [(6000, 6999)]
+UTILITIES = [(4900, 4999)]
 
 
 def prepare_panel(panel: pd.DataFrame, signal: str) -> pd.DataFrame:
@@ -33,7 +42,8 @@ def prepare_panel(panel: pd.DataFrame, signal: str) -> pd.DataFrame:
     if missing:
         raise KeyError(f"Columns missing from the panel: {missing}")
 
-    df = panel[REQUIRED_COLS + [signal]].copy()
+    optional = [c for c in OPTIONAL_COLS if c in panel.columns]
+    df = panel[REQUIRED_COLS + optional + [signal]].copy()
     df["MthCalDt"] = pd.to_datetime(df["MthCalDt"])
     df = df.sort_values(["PERMNO", "MthCalDt"]).reset_index(drop=True)
 
@@ -50,6 +60,9 @@ def prepare_panel(panel: pd.DataFrame, signal: str) -> pd.DataFrame:
 def _formation_snapshot(df: pd.DataFrame, signal: str, rebalance: str) -> pd.DataFrame:
     """One row per stock and formation date, with the value used for sorting.
     Also sets df["form_key"]: which formation date each holding month belongs to."""
+    info_cols = ["PERMNO", "MthCalDt", "PrimaryExch", "mkt_cap"] + [
+        c for c in OPTIONAL_COLS if c in df.columns
+    ]
     if rebalance == "annual":
         # Look-ahead protection: the signal must not change within July-June
         n_values = (
@@ -61,10 +74,9 @@ def _formation_snapshot(df: pd.DataFrame, signal: str, rebalance: str) -> pd.Dat
                 "stock-years. Annual rebalancing needs a signal fixed within the year "
                 "(accounting data). Use rebalance='monthly' for market-based signals."
             )
-        # Market cap and exchange measured at the end of June of year t
-        snap = df.loc[df["MthCalDt"].dt.month == 6, ["PERMNO", "MthCalDt", "PrimaryExch", "mkt_cap"]].copy()
+        # Market cap, exchange, price, SIC measured at the end of June of year t
+        snap = df.loc[df["MthCalDt"].dt.month == 6, info_cols].copy()
         snap["form_key"] = snap["MthCalDt"].dt.year
-        # Signal used for the sort in June t = accounting value for July t to June t+1
         sig = (
             df.dropna(subset=[signal])
             .groupby(["PERMNO", "formation_year"])[signal].first()
@@ -75,16 +87,41 @@ def _formation_snapshot(df: pd.DataFrame, signal: str, rebalance: str) -> pd.Dat
         df["form_key"] = df["formation_year"]
 
     elif rebalance == "monthly":
-        snap = df[["PERMNO", "MthCalDt", "PrimaryExch", "mkt_cap", signal, "month_id"]].copy()
+        snap = df[info_cols + [signal, "month_id"]].copy()
         snap = snap.rename(columns={signal: "sort_value", "month_id": "form_key"})
         df["form_key"] = df["month_id"] - 1  # hold in month m what was formed in m-1
 
     else:
         raise ValueError("rebalance must be 'annual' or 'monthly'")
 
-    # Eligible at formation: positive market cap and a real (finite) signal
     ok = (snap["mkt_cap"] > 0) & np.isfinite(snap["sort_value"])
     return snap[ok].copy()
+
+
+def _apply_filters(
+    snap: pd.DataFrame,
+    breakpoint_exchanges: Sequence[str],
+    min_price: Optional[float],
+    min_nyse_size_pct: Optional[float],
+    exclude_sic: Optional[List[Tuple[int, int]]],
+) -> pd.DataFrame:
+    """Universe filters at the formation date (no filter = no change)."""
+    if min_nyse_size_pct is not None:
+        nyse = snap[snap["PrimaryExch"].isin(breakpoint_exchanges)]
+        cut = nyse.groupby("form_key")["mkt_cap"].quantile(min_nyse_size_pct)
+        snap = snap[snap["mkt_cap"] >= snap["form_key"].map(cut)]
+    if min_price is not None:
+        if "MthPrc" not in snap.columns:
+            raise KeyError("min_price needs the column 'MthPrc' in the panel")
+        snap = snap[snap["MthPrc"] >= min_price]
+    if exclude_sic:
+        if "SICCD" not in snap.columns:
+            raise KeyError("exclude_sic needs the column 'SICCD' in the panel")
+        drop = pd.Series(False, index=snap.index)
+        for low, high in exclude_sic:
+            drop |= snap["SICCD"].between(low, high)
+        snap = snap[~drop]
+    return snap
 
 
 def sort_portfolios(
@@ -93,6 +130,9 @@ def sort_portfolios(
     n_portfolios: int = 10,
     rebalance: str = "annual",
     breakpoint_exchanges: Sequence[str] = ("N",),
+    min_price: Optional[float] = None,
+    min_nyse_size_pct: Optional[float] = None,
+    exclude_sic: Optional[List[Tuple[int, int]]] = None,
 ) -> Dict[str, pd.DataFrame]:
     """Build portfolios sorted on `signal`.
 
@@ -105,6 +145,7 @@ def sort_portfolios(
     """
     df = prepare_panel(panel, signal)
     snap = _formation_snapshot(df, signal, rebalance)
+    snap = _apply_filters(snap, breakpoint_exchanges, min_price, min_nyse_size_pct, exclude_sic)
 
     # Breakpoints from NYSE stocks only
     quantiles = [i / n_portfolios for i in range(1, n_portfolios)]
@@ -113,7 +154,6 @@ def sort_portfolios(
     breakpoints.columns = [f"P{round(q * 100)}" for q in quantiles]
 
     # Assign portfolios: portfolio = 1 + number of breakpoints strictly below the value
-    # (so a value equal to a breakpoint goes to the lower portfolio, as on slide 15)
     snap = snap[snap["form_key"].isin(breakpoints.index)]
     bp_matrix = breakpoints.loc[snap["form_key"]].to_numpy()
     values = snap["sort_value"].to_numpy()[:, None]
