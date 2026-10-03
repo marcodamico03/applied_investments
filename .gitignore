@@ -4,6 +4,7 @@
 !/data/**/.gitkeep
 *.parquet
 *.csv
+results/
 
 # Python / environment
 __pycache__/
