@@ -12,6 +12,7 @@ Run from the project folder:
     python scripts/run_all.py --signals momentum book_to_market
     python scripts/run_all.py --skip-clean      # reuse data/interim/ (faster)
     python scripts/run_all.py --config configs/my_test.yaml
+    python scripts/run_all.py --final --skip-clean   # only our 3 final strategies
 
 Never touches the test period: there is no --holdout here on purpose. Run
     python scripts/run_signal.py --signal <name> --holdout
@@ -40,6 +41,10 @@ RAW_FILES = ["crsp_monthly.csv", "ccm_funda.csv"]
 INTERIM_DIR = BASE_DIR / "data" / "interim"
 CLEAN_FILES = ["crsp_clean.parquet", "compustat_clean.parquet"]
 LOG_DIR = BASE_DIR / "results" / "logs"
+
+# --final: our final strategies, with the project config, no validation/regression
+FINAL_SIGNALS = ["seasonality_idio", "alpha_combo2", "hybrid_combo"]
+FINAL_CONFIG = "configs/strategies.yaml"
 
 
 def check_inputs(skip_clean: bool, factors_file: Path) -> None:
@@ -95,7 +100,14 @@ def main() -> None:
                         help="reuse the cleaned data already in data/interim/")
     parser.add_argument("--skip-validation", action="store_true", help="skip the Ken French comparisons")
     parser.add_argument("--skip-regression", action="store_true", help="skip run_asset_growth.py")
+    parser.add_argument("--final", action="store_true",
+                        help=f"only the final strategies ({', '.join(FINAL_SIGNALS)}) with "
+                             f"{FINAL_CONFIG}, skipping validation and regression")
     args = parser.parse_args()
+    if args.final:
+        args.signals = args.signals or FINAL_SIGNALS
+        args.config = FINAL_CONFIG
+        args.skip_validation = args.skip_regression = True
 
     signals = args.signals or available()
     for name in signals:

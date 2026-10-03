@@ -124,6 +124,27 @@ def _apply_filters(
     return snap
 
 
+def _apply_buffer(snap: pd.DataFrame, n_portfolios: int, buffer: int) -> np.ndarray:
+    """Portfolio numbers after the buffer rule (see sort_portfolios). Only stocks
+    held in an extreme portfolio at the previous formation date (form_key - 1)
+    can be kept there."""
+    if not 0 < buffer < n_portfolios / 2:
+        raise ValueError("buffer must be between 1 and n_portfolios/2")
+    port = snap["port"].to_numpy().copy()
+    ids = snap["PERMNO"].to_numpy()
+    top, bottom = n_portfolios, 1
+    prev_key, prev_top, prev_bottom = None, np.array([]), np.array([])
+    for key, idx in sorted(snap.groupby("form_key").indices.items()):
+        if prev_key is not None and key == prev_key + 1:
+            stay_top = np.isin(ids[idx], prev_top) & (port[idx] >= top - buffer)
+            stay_bottom = np.isin(ids[idx], prev_bottom) & (port[idx] <= bottom + buffer)
+            port[idx[stay_top]] = top
+            port[idx[stay_bottom]] = bottom
+        prev_top, prev_bottom = ids[idx][port[idx] == top], ids[idx][port[idx] == bottom]
+        prev_key = key
+    return port
+
+
 def sort_portfolios(
     panel: pd.DataFrame,
     signal: str,
@@ -134,8 +155,16 @@ def sort_portfolios(
     min_nyse_size_pct: Optional[float] = None,
     exclude_sic: Optional[List[Tuple[int, int]]] = None,
     return_holdings: bool = False,
+    buffer: int = 0,
 ) -> Dict[str, pd.DataFrame]:
     """Build portfolios sorted on `signal`.
+
+    buffer > 0 lowers turnover in the two extreme portfolios (Novy-Marx and
+    Velikov 2016, "A taxonomy of anomalies and their trading costs"): a stock
+    enters portfolio n (or 1) only when it reaches it, but stays there as long as
+    it is within `buffer` portfolios of it (buffer=2 with deciles: it stays in the
+    top portfolio while it is in deciles 8-10). Kept stocks leave the middle
+    portfolio they would otherwise be in, so portfolios 2..n-1 change slightly.
 
     Returns a dictionary with:
       ew          monthly equal-weighted returns (rows: months, columns: portfolios)
@@ -161,6 +190,8 @@ def sort_portfolios(
     bp_matrix = breakpoints.loc[snap["form_key"]].to_numpy()
     values = snap["sort_value"].to_numpy()[:, None]
     snap["port"] = (values > bp_matrix).sum(axis=1) + 1
+    if buffer:
+        snap["port"] = _apply_buffer(snap, n_portfolios, buffer)
 
     # Holding months: attach each stock-month to its portfolio
     hold = df.merge(snap[["PERMNO", "form_key", "port"]], on=["PERMNO", "form_key"], how="inner")

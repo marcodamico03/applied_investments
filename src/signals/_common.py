@@ -9,6 +9,9 @@ the list of signals in src/signals/__init__.py).
   month by month, with betas estimated on the previous WINDOW months only.
   Computed once and cached in data/interim/ (several signals use it).
 - cross_rank: rank a signal within each month, from -0.5 to +0.5.
+- seasonal_spread: same-calendar-month minus other-months average return
+  (Heston and Sadka 2008; Keloharju, Linnainmaa and Nyberg 2016), used by
+  seasonality_idio.py.
 """
 from pathlib import Path
 from typing import Tuple
@@ -93,3 +96,28 @@ def factor_residuals(panel: pd.DataFrame, model: str = "FF5", window: int = 36):
 def cross_rank(panel: pd.DataFrame, values: pd.Series) -> pd.Series:
     """Percentile rank within each month, centred: from -0.5 (lowest) to +0.5 (highest)."""
     return values.groupby(panel["MthCalDt"]).rank(pct=True) - 0.5
+
+
+YEARS, MIN_YEARS = 20, 5  # seasonal_spread: look back 20 years, need at least 5
+
+
+def seasonal_spread(M: np.ndarray, years: int = YEARS, min_years: int = MIN_YEARS) -> np.ndarray:
+    """Same-calendar-month average minus other-months average over the last `years`
+    years, for every row t of a (months x stocks) matrix. Uses rows t-12*years+1..t only."""
+    T = M.shape[0]
+    filled = np.nan_to_num(M)
+    has = (~np.isnan(M)).astype(float)
+    # running sums over the last 12*years months (rows t-12*years+1 .. t)
+    cs = np.vstack([np.zeros((1, M.shape[1])), np.cumsum(filled, axis=0)])
+    cn = np.vstack([np.zeros((1, M.shape[1])), np.cumsum(has, axis=0)])
+    L = 12 * years
+    out = np.full(M.shape, np.nan)
+    for t in range(11, T):
+        lo = max(0, t - L + 1)
+        tot_s, tot_n = cs[t + 1] - cs[lo], cn[t + 1] - cn[lo]
+        lags = np.arange(t - 11, lo - 1, -12)          # t-11, t-23, ... (same month as t+1)
+        same_s, same_n = filled[lags].sum(axis=0), has[lags].sum(axis=0)
+        other_n = tot_n - same_n
+        ok = (same_n >= min_years) & (other_n >= 11 * min_years)
+        out[t, ok] = same_s[ok] / same_n[ok] - (tot_s[ok] - same_s[ok]) / other_n[ok]
+    return out

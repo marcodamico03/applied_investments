@@ -2,7 +2,7 @@
 Build data/external/factors_monthly.csv from the original public sources.
 
 Sources:
-  - Kenneth French data library: Fama-French 5 factors (2x3) and momentum
+  - Kenneth French data library: Fama-French 5 factors (2x3), momentum and short-term reversal
     https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html
   - Hou, Xue and Zhang q-factor data library: q5 factors (monthly)
     https://global-q.org/factors.html
@@ -21,6 +21,10 @@ Output: one row per month ("YYYY-MM"), all returns in DECIMALS (0.01 = 1%):
   MKT_RF, SMB, HML, RMW, CMA, RF        Fama-French 5 factors (from 1963-07)
   MOM                                   momentum (from 1927-01)
   Q_RF, Q_MKT, Q_ME, Q_IA, Q_ROE, Q_EG  q5 factors (from 1967-01)
+  STREV                                 short-term reversal (from 1926)
+
+To add only STREV to an existing file (all other columns unchanged):
+  python src/data/factors.py --add-reversal
 Months where a library has no data are left empty.
 """
 import io
@@ -45,6 +49,7 @@ OUTPUT = EXT_DIR / "factors_monthly.csv"
 FRENCH_URL = "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/"
 FF5_FILE = "F-F_Research_Data_5_Factors_2x3_CSV.zip"
 MOM_FILE = "F-F_Momentum_Factor_CSV.zip"
+STREV_FILE = "F-F_ST_Reversal_Factor_CSV.zip"  # short-term reversal (prior month return)
 # The q-factor file name contains the year of the last update, so we try recent years
 Q_URL = "https://global-q.org/uploads/1/2/2/6/122679606/q5_factors_monthly_{year}.csv"
 
@@ -187,7 +192,10 @@ def build() -> pd.DataFrame:
     print("q5 factors")
     q = read_q(get_q())
 
-    factors = pd.concat([ff5, mom, q], axis=1).sort_index()
+    print("Short-term reversal")
+    strev = read_reversal()
+
+    factors = pd.concat([ff5, mom, q, strev], axis=1).sort_index()
     factors.index.name = "month"
 
     # Sanity checks: returns in decimals, no gaps inside each library
@@ -205,6 +213,30 @@ def build() -> pd.DataFrame:
     return factors
 
 
+def read_reversal() -> pd.DataFrame:
+    """Ken French's short-term reversal factor (decimals), column STREV."""
+    strev = read_french_zip(get_french(STREV_FILE))
+    return strev.iloc[:, [0]].set_axis(["STREV"], axis=1)  # column is called "ST_Rev"
+
+
+def add_reversal_only() -> None:
+    """Add (or refresh) only the STREV column of the existing factor file. Every
+    other column stays exactly as it is, so the team's factor vintage is unchanged."""
+    if not OUTPUT.exists():
+        raise FileNotFoundError(f"{OUTPUT} not found: run without --add-reversal first")
+    factors = pd.read_csv(OUTPUT, index_col=0)
+    factors.index = pd.PeriodIndex(factors.index, freq="M")
+    print("Short-term reversal")
+    strev = read_reversal()["STREV"]
+    factors["STREV"] = strev.reindex(factors.index)
+    s = factors["STREV"].dropna()
+    print(f"  STREV   {s.index.min()} to {s.index.max()}  mean {s.mean() * 100:6.3f}% per month")
+    assert s.abs().max() < 0.5, "STREV too large: units are probably wrong"
+    factors.index.name = "month"
+    factors.to_csv(OUTPUT)
+    print(f"Saved: {OUTPUT}  {factors.shape}")
+
+
 def compare_with_old(new: pd.DataFrame) -> None:
     """If a factors file already exists, show how much the new one differs."""
     if not OUTPUT.exists():
@@ -220,6 +252,11 @@ def compare_with_old(new: pd.DataFrame) -> None:
 
 
 if __name__ == "__main__":
+    import sys
+
+    if "--add-reversal" in sys.argv:  # only add the STREV column, keep everything else
+        add_reversal_only()
+        sys.exit()
     factors = build()
     compare_with_old(factors)
     factors.to_csv(OUTPUT)

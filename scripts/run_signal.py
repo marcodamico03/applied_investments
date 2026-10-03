@@ -38,7 +38,7 @@ import yaml
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))  # lets Python find the "src" folder
 
-from src.evaluation.alpha import alpha_table, grs_test, load_factors, regress  # noqa: E402
+from src.evaluation.alpha import MODELS, alpha_table, grs_test, load_factors, regress  # noqa: E402
 from src.evaluation.performance import spread_stats  # noqa: E402
 from src.portfolio.costs import trading_cost, turnover  # noqa: E402
 from src.portfolio.sorts import FINANCIALS, UTILITIES, sort_portfolios, summarize  # noqa: E402
@@ -49,17 +49,25 @@ pd.set_option("display.max_columns", 30)
 pd.set_option("display.float_format", lambda x: f"{x:.2f}")
 
 
+PORTFOLIO_KEYS = {"buffer", "nyse_breakpoints"}  # robustness keys that belong to `portfolio`
+
+
 def sort_options(universe: dict, portfolio: dict) -> dict:
     """Translate the config into the arguments of sort_portfolios."""
     exclude = (FINANCIALS if universe.get("exclude_financials") else []) + (
         UTILITIES if universe.get("exclude_utilities") else []
     )
+    # turnover buffer (sorts.py); not possible with fewer than 2*buffer+1 portfolios
+    buffer = portfolio.get("buffer") or 0
+    if buffer >= portfolio["n_portfolios"] / 2:
+        buffer = 0
     return {
         "n_portfolios": portfolio["n_portfolios"],
         "breakpoint_exchanges": ("N",) if portfolio["nyse_breakpoints"] else ("N", "A", "Q"),
         "min_price": universe.get("min_price"),
         "min_nyse_size_pct": universe.get("min_nyse_size_pct"),
         "exclude_sic": exclude or None,
+        "buffer": buffer,
     }
 
 
@@ -131,6 +139,13 @@ def main() -> None:
         periods.update({"test": test, "full": (train[0], test[1])})
         samples["test"] = test
     start, end = train[0], (test[1] if args.holdout else valid[1])
+    # Optional: the periods for alphas and robustness listed in the config
+    # (evaluation.alpha_periods, e.g. full sample, last 30 years, last 20 years).
+    # They replace "insample"; a period is cut at `end` (the test years only with --holdout).
+    alpha_periods = cfg["evaluation"].get("alpha_periods") or {}
+    if alpha_periods:
+        samples = {k: (v[0], min(v[1], end)) for k, v in alpha_periods.items() if v[0] <= end}
+        periods.update(samples)
 
     out_dir = BASE_DIR / "results" / "signals" / name
     if args.holdout:
@@ -146,6 +161,15 @@ def main() -> None:
     bps = cfg["costs"]["one_way_bps"]
     ev = cfg["evaluation"]
     factors = load_factors(BASE_DIR / cfg["data"]["factors"])
+    # skip models whose factors are not in the file (e.g. STREV before
+    # `python src/data/factors.py --add-reversal`)
+    usable = [m for m in ev["models"]
+              if set(MODELS[m]["factors"] + [MODELS[m]["rf"]]) <= set(factors.columns)]
+    if len(usable) < len(ev["models"]):
+        print(f"!! Skipping models with factors missing from the factor file: "
+              f"{sorted(set(ev['models']) - set(usable))}")
+        ev = {**ev, "models": usable,
+              "headline_models": [m for m in ev["headline_models"] if m in usable]}
 
     # 1. Signal and portfolios
     print(f"Loading the panel and computing '{name}' ({spec.REBALANCE} rebalancing)...")
@@ -206,9 +230,12 @@ def main() -> None:
         if overrides is None:
             res = base
         else:
-            print(f"\nRobustness universe '{variant}': {overrides}")
-            res = backtest(panel, name, spec, sort_options({**cfg["universe"], **overrides},
-                           portfolio_cfg), weightings, bps, start, end)
+            print(f"\nRobustness variant '{variant}': {overrides}")
+            # a variant can change universe keys and portfolio keys (e.g. buffer)
+            port_over = {k: v for k, v in overrides.items() if k in PORTFOLIO_KEYS}
+            uni_over = {k: v for k, v in overrides.items() if k not in PORTFOLIO_KEYS}
+            res = backtest(panel, name, spec, sort_options({**cfg["universe"], **uni_over},
+                           {**portfolio_cfg, **port_over}), weightings, bps, start, end)
         for sample, (s, e) in samples.items():
             n = res["n_stocks"].loc[s:e]
             for w in weightings:
@@ -220,12 +247,21 @@ def main() -> None:
                     a = regress(r[spread], factors, m, long_short=True,
                                 nw_lags=ev["newey_west_lags"], start=s, end=e)
                     row[f"{m} alpha %"], row[f"{m} t"] = a["alpha %"], a["t(alpha)"]
+                    # the same alpha after trading costs (net spread)
+                    a = regress(r[net], factors, m, long_short=True,
+                                nw_lags=ev["newey_west_lags"], start=s, end=e)
+                    row[f"{m} net alpha %"], row[f"{m} net t"] = a["alpha %"], a["t(alpha)"]
                 rows.append(row)
     robust = pd.DataFrame(rows).set_index(["variant", "sample", "weighting"])
     robust.to_csv(out_dir / "robustness.csv")
-    shown = ["Avg %", "t", "Net avg %", "Net t", "Stocks long", "Stocks short"]
+    shown = ["Avg %", "t", "Break-even bps", "Stocks long", "Stocks short"]
     shown += [c for m in ev["headline_models"] for c in (f"{m} alpha %", f"{m} t")]
-    print(f"\n===== Robustness: spread {spread} in other universes (all models in robustness.csv) =====")
+    print(f"\n===== BEFORE costs: spread {spread} by universe and period "
+          f"(all models in robustness.csv) =====")
+    print(robust[shown].to_string())
+    shown = ["Net avg %", "Net t", "Turnover % long", "Turnover % short"]
+    shown += [c for m in ev["headline_models"] for c in (f"{m} net alpha %", f"{m} net t")]
+    print(f"\n===== AFTER costs ({bps} bps per trade): net spread and net alphas =====")
     print(robust[shown].to_string())
 
     info = {

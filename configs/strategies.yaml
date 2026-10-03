@@ -9,7 +9,9 @@
 # 2. The main universe excludes microcaps (below the NYSE 20th size percentile):
 #    alphas from stocks too small to trade are not credible. "all_stocks" in the
 #    robustness section shows the result with every stock.
-# 3. The headline alphas are CAPM, FF6 and q5 (the hardest benchmarks).
+# 3. The headline alphas are CAPM, FF6, q5 (the hardest benchmarks) and q5+STR
+#    (q5 plus short-term reversal, needs `python src/data/factors.py --add-reversal`).
+# 4. Robustness adds a turnover buffer variant (portfolio.buffer, see sorts.py).
 
 data:
   factors: data/external/factors_monthly.csv
@@ -29,16 +31,24 @@ portfolio:
   n_portfolios: 10            # a signal can override it (dividend_month uses 2)
   nyse_breakpoints: true
   weighting: [ew, vw]
+  buffer: 0                   # turnover buffer, 0 = off (the "buffer" robustness variant uses 2)
 
 costs:
   one_way_bps: 20
 
 evaluation:
-  models: [CAPM, FF3, FF4, FF5, FF6, q4, q5]
-  headline_models: [CAPM, FF6, q5]
+  models: [CAPM, FF3, FF4, FF5, FF6, q4, q5, FF6+STR, q5+STR]
+  headline_models: [CAPM, FF6, q5, q5+STR]
   newey_west_lags: 6
+  # periods for alphas and robustness tables (full sample + zoom on recent years)
+  alpha_periods:
+    full: ["1963-07", "2025-12"]
+    last30: ["1995-01", "2025-12"]
+    last20: ["2005-01", "2025-12"]
 
 robustness:
   all_stocks: {min_nyse_size_pct: null}
   price_above_5: {min_price: 5}
   no_fin_util: {exclude_financials: true, exclude_utilities: true}
+  large_caps: {min_nyse_size_pct: 0.5}   # only stocks above the NYSE median: cheapest to trade
+  buffer: {buffer: 2}         # enter in decile 10 (1), leave only below decile 8 (above 3)

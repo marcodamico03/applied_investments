@@ -18,9 +18,9 @@ with at least MIN_FIRMS stocks:
 Long the followers that lagged their leaders most, short those that ran ahead.
 
 Caveat for the report: the signal contains minus the stock's own last-month
-return, i.e. part of the known short-term reversal effect. The benchmark models
-have no reversal factor, so check how much is left once last-month return is
-controlled for (alpha_combo.py neutralises it).
+return, i.e. part of the known short-term reversal effect. The standard benchmark
+models have no reversal factor, so check the FF6+STR and q5+STR alphas (they add
+Ken French's short-term reversal factor, see src/evaluation/alpha.py).
 """
 import numpy as np
 import pandas as pd

@@ -28,6 +28,10 @@ MODELS: Dict[str, Dict] = {
     "FF6": {"factors": ["MKT_RF", "SMB", "HML", "RMW", "CMA", "MOM"], "rf": "RF"},
     "q4": {"factors": ["Q_MKT", "Q_ME", "Q_IA", "Q_ROE"], "rf": "Q_RF"},
     "q5": {"factors": ["Q_MKT", "Q_ME", "Q_IA", "Q_ROE", "Q_EG"], "rf": "Q_RF"},
+    # the two hardest models plus Ken French's short-term reversal factor (STREV),
+    # for signals that use last month's return (e.g. laggard)
+    "FF6+STR": {"factors": ["MKT_RF", "SMB", "HML", "RMW", "CMA", "MOM", "STREV"], "rf": "RF"},
+    "q5+STR": {"factors": ["Q_MKT", "Q_ME", "Q_IA", "Q_ROE", "Q_EG", "STREV"], "rf": "Q_RF"},
 }
 
 
