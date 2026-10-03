@@ -133,6 +133,7 @@ def sort_portfolios(
     min_price: Optional[float] = None,
     min_nyse_size_pct: Optional[float] = None,
     exclude_sic: Optional[List[Tuple[int, int]]] = None,
+    return_holdings: bool = False,
 ) -> Dict[str, pd.DataFrame]:
     """Build portfolios sorted on `signal`.
 
@@ -142,6 +143,8 @@ def sort_portfolios(
       n_stocks    number of stocks with a return, per month and portfolio
       breakpoints breakpoints used at each formation date
       assignments which portfolio each stock was in at each formation date
+      holdings    only if return_holdings=True: one row per stock and holding
+                  month (PERMNO, month, port, MthRet, mcap_lag), used for turnover
     """
     df = prepare_panel(panel, signal)
     snap = _formation_snapshot(df, signal, rebalance)
@@ -173,13 +176,16 @@ def sort_portfolios(
 
     n_stocks = hold.groupby(["month", "port"]).size().unstack()
 
-    return {
+    out = {
         "ew": ew,
         "vw": vw,
         "n_stocks": n_stocks,
         "breakpoints": breakpoints,
         "assignments": snap[["PERMNO", "form_key", "sort_value", "port", "mkt_cap"]],
     }
+    if return_holdings:
+        out["holdings"] = hold[["PERMNO", "month", "port", "MthRet", "mcap_lag"]].reset_index(drop=True)
+    return out
 
 
 def summarize(returns: pd.DataFrame, long_port: int, short_port: int) -> pd.DataFrame:

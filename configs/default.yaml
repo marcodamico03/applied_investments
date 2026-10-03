@@ -1,44 +1,49 @@
-# Default research configuration. Copy and edit for a specific experiment,
-# then pass it with `--config configs/<name>.yaml`.
+# Research configuration read by scripts/run_signal.py. Every key below is used.
+# For an experiment, copy this file, edit the copy and run
+#   python scripts/run_signal.py --signal <name> --config configs/<copy>.yaml
 
 data:
-  crsp_raw: data/raw/crsp_monthly.csv        # WRDS CRSP monthly (CIZ format)
-  comp_raw: data/raw/ccm_funda.csv           # WRDS CCM-linked Compustat annual
-  crsp_clean: data/interim/crsp_monthly.parquet
-  comp_clean: data/interim/comp_annual.parquet
-  panel: data/processed/panel.parquet
-  ff_factors: data/external/ff_factors_monthly.parquet
+  factors: data/external/factors_monthly.csv   # fixed vintage shared by the team
+# The cleaned CRSP and Compustat files are always data/interim/crsp_clean.parquet and
+# data/interim/compustat_clean.parquet (written by src/data/clean.py). Accounting data
+# is used from July of the year after the fiscal year end, at least 6 months later;
+# src/data/panel.py checks it every time it loads the panel.
 
-# Accounting data is only used once it would have been public.
-# 6 months after fiscal year end is the conservative standard.
-reporting_lag_months: 6
-
-# Sample periods. The test period is the holdout: only look at it once,
-# after the signal and all choices are frozen (run_experiment.py --holdout).
+# Sample periods (YYYY-MM). The test period is the holdout: run_signal.py only
+# computes it with --holdout. Do that ONCE per signal, after the signal and every
+# choice in this file are frozen.
 periods:
-  train: ["1963-07-31", "2005-12-31"]
-  validation: ["2006-01-31", "2015-12-31"]
-  test: ["2016-01-31", "2025-12-31"]
+  train: ["1963-07", "2005-12"]
+  validation: ["2006-01", "2015-12"]
+  test: ["2016-01", "2025-12"]
 
+# Which stocks can enter the portfolios, checked at each formation date. The
+# cleaned data already keeps only US common stocks on NYSE, AMEX and NASDAQ.
+# All filters off = the method of the slides and of Ken French's portfolios.
 universe:
-  exchanges: [N, A, Q]        # NYSE, AMEX, Nasdaq
-  min_price: 5.0              # drop penny stocks (set to null to disable)
-  min_me_nyse_pct: null       # e.g. 0.2 drops stocks below the NYSE 20th pct of market cap
+  min_price: null             # e.g. 5 drops stocks priced below $5
+  min_nyse_size_pct: null     # e.g. 0.2 drops stocks below the NYSE 20th percentile of market cap
   exclude_financials: false   # SIC 6000-6999
   exclude_utilities: false    # SIC 4900-4999
 
 portfolio:
-  n_quantiles: 10
-  nyse_breakpoints: true      # compute quantile cutoffs on NYSE stocks only
-  weighting: [ew, vw]         # report both
+  n_portfolios: 10
+  nyse_breakpoints: true      # quantile cutoffs from NYSE stocks only (false: all stocks)
+  weighting: [ew, vw]
 
 costs:
-  one_way_bps: 20             # transaction cost per unit of one-way turnover
+  # Cost of every trade, in basis points of the amount bought or sold. Both legs of
+  # the spread pay it on their turnover (see src/portfolio/costs.py).
+  one_way_bps: 20
 
 evaluation:
-  factor_models:
-    CAPM: [mktrf]
-    FF3: [mktrf, smb, hml]
-    FF5: [mktrf, smb, hml, rmw, cma]
-    FF5+MOM: [mktrf, smb, hml, rmw, cma, mom]
+  models: [CAPM, FF3, FF4, FF5, FF6, q4, q5]   # names defined in src/evaluation/alpha.py
+  headline_models: [CAPM, FF5]                  # alphas shown in the robustness printout
   newey_west_lags: 6
+
+# The same backtest in other universes. Each entry overrides keys of `universe`.
+# Results in robustness.csv, next to the main universe above.
+robustness:
+  no_microcaps: {min_nyse_size_pct: 0.2}
+  price_above_5: {min_price: 5}
+  no_fin_util: {exclude_financials: true, exclude_utilities: true}

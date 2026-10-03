@@ -29,6 +29,7 @@ import urllib.request
 import zipfile
 from datetime import date
 from pathlib import Path
+from typing import Dict
 
 import numpy as np
 import pandas as pd
@@ -112,6 +113,49 @@ def read_french_zip(path: Path) -> pd.DataFrame:
     df.index = pd.PeriodIndex([f"{r[0][:4]}-{r[0][4:]}" for r in rows], freq="M")
     df = df.replace([-99.99, -999], np.nan) / 100  # percent -> decimals
     return df
+
+
+def read_french_blocks(path: Path) -> Dict[str, pd.DataFrame]:
+    """Every monthly table of a French CSV file, keyed by its title line
+    (e.g. 'Value Weight Returns -- Monthly'). Values are as in the file."""
+    with zipfile.ZipFile(path) as z:
+        name = [n for n in z.namelist() if n.lower().endswith(".csv")][0]
+        lines = z.read(name).decode("latin-1").splitlines()
+
+    blocks, title, header, dates, rows = {}, None, None, [], []
+    for line in lines + [""]:
+        fields = [f.strip() for f in line.split(",")]
+        if re.fullmatch(r"\d{6}", fields[0]):
+            dates.append(f"{fields[0][:4]}-{fields[0][4:]}")
+            rows.append(fields[1:len(header) + 1])
+            continue
+        if rows:  # first line after a monthly table
+            blocks[title] = pd.DataFrame(
+                rows, columns=header, index=pd.PeriodIndex(dates, freq="M"), dtype=float
+            )
+            dates, rows = [], []
+        if len(fields) > 1 and fields[0] == "" and any(fields[1:]):
+            header = fields[1:]
+        elif len(fields) == 1 and fields[0]:
+            title = fields[0]
+    return blocks
+
+
+def read_french_portfolios(path: Path, n_portfolios: int = 10) -> Dict[str, pd.DataFrame]:
+    """Monthly returns (decimals) of a French portfolio file: {"vw": ..., "ew": ...}.
+    Keeps the last n_portfolios columns (the deciles, low to high) as columns 1..n."""
+    out = {}
+    for title, df in read_french_blocks(path).items():
+        t = title.lower()
+        if "returns" not in t or "monthly" not in t:
+            continue
+        key = "vw" if "value weight" in t else "ew" if "equal weight" in t else None
+        if key and key not in out:
+            part = df.iloc[:, -n_portfolios:].replace([-99.99, -999], np.nan) / 100
+            out[key] = part.set_axis(range(1, n_portfolios + 1), axis=1)
+    if set(out) != {"ew", "vw"}:
+        raise ValueError(f"Could not find the monthly EW and VW returns in {path.name}")
+    return out
 
 
 def read_q(path: Path) -> pd.DataFrame:

@@ -36,6 +36,9 @@ FUND_REIT_SIC = [6720, 6722, 6723, 6724, 6725, 6726, 6798]
 # printout. If many delisting months have a missing return, set it to True.
 # SHUMWAY_ACTION_TYPES: None = fill every missing delisting return; otherwise a
 # list of DelActionType codes (the performance-related ones) to restrict it.
+# Checked on our WRDS extract (CIZ format, to 2025-12): only 13 of 22,858
+# delisting months (0.06%) have a missing return, because CIZ MthRet already
+# includes the delisting return. So the fill stays off.
 # ------------------------------------------------------------------------------
 SHUMWAY_FILL = False
 SHUMWAY_ACTION_TYPES = None
