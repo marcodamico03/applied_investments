@@ -4,7 +4,7 @@ Run every command from the project folder. Install the packages once with
 `pip install -r requirements.txt`.
 
 To run everything below (except the holdout) in one go: `python scripts/run_all.py`
-(`--signals momentum` for just some signals, `--clean` to redo the cleaning).
+(`--signals momentum` for just some signals, `--skip-clean` to reuse the cleaned data).
 
 ## Once: data
 1. Put the WRDS files in `data/raw/` (`crsp_monthly.csv`, `ccm_funda.csv`).

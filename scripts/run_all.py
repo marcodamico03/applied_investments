@@ -1,6 +1,8 @@
 """
-Run the whole pipeline in one go:
-  1. clean the WRDS data (only if data/interim/ is missing it, or with --clean)
+Run the whole pipeline in one go, in the order each step needs:
+  0. check the inputs: the WRDS files in data/raw/ and the factor file (restored
+     from git if it is missing; never rebuilt, so the team keeps one vintage)
+  1. clean the WRDS data -> data/interim/ (everything below reads it)
   2. reproduce the professor's asset growth numbers (regression test)
   3. for every signal in src/signals/: compare with Ken French (if it has a
      FRENCH_BENCHMARK), then backtest on train + validation
@@ -8,15 +10,17 @@ Run the whole pipeline in one go:
 Run from the project folder:
     python scripts/run_all.py
     python scripts/run_all.py --signals momentum book_to_market
-    python scripts/run_all.py --clean --config configs/my_test.yaml
+    python scripts/run_all.py --skip-clean      # reuse data/interim/ (faster)
+    python scripts/run_all.py --config configs/my_test.yaml
 
 Never touches the test period: there is no --holdout here on purpose. Run
     python scripts/run_signal.py --signal <name> --holdout
 by hand, once, when the signal and the config are frozen.
 
-Each step runs as its own process. If one fails, the others still run, and the
-summary at the end lists what failed. The full output of every step is saved
-in results/logs/<step>.log.
+Each step runs as its own process. If the cleaning fails, nothing else runs
+(every later step needs its output). If a later step fails, the others still
+run, and the summary at the end lists what failed. The full output of every
+step is saved in results/logs/<step>.log.
 """
 import argparse
 import subprocess
@@ -24,14 +28,40 @@ import sys
 import time
 from pathlib import Path
 
+import yaml
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))  # lets Python find the "src" folder
 
 from src.signals import available, load_signal  # noqa: E402
 
+RAW_DIR = BASE_DIR / "data" / "raw"
+RAW_FILES = ["crsp_monthly.csv", "ccm_funda.csv"]
 INTERIM_DIR = BASE_DIR / "data" / "interim"
 CLEAN_FILES = ["crsp_clean.parquet", "compustat_clean.parquet"]
 LOG_DIR = BASE_DIR / "results" / "logs"
+
+
+def check_inputs(skip_clean: bool, factors_file: Path) -> None:
+    """Stop before running anything if an input is missing."""
+    if skip_clean:
+        missing = [INTERIM_DIR / f for f in CLEAN_FILES if not (INTERIM_DIR / f).exists()]
+        hint = "Run without --skip-clean to build them from data/raw/."
+    else:
+        missing = [RAW_DIR / f for f in RAW_FILES if not (RAW_DIR / f).exists()]
+        hint = "Download them from WRDS and put them in data/raw/ with exactly these names."
+    if missing:
+        sys.exit("Missing input files:\n" + "\n".join(f"  {p}" for p in missing) + f"\n{hint}")
+
+    if not factors_file.exists():
+        # The factor file is in git (one vintage for the whole team): restore it
+        # instead of downloading a new one with src/data/factors.py.
+        rel = factors_file.relative_to(BASE_DIR).as_posix()
+        print(f"{rel} is missing: restoring the team's copy from git...")
+        subprocess.run(["git", "checkout", "HEAD", "--", rel], cwd=BASE_DIR)
+        if not factors_file.exists():
+            sys.exit(f"Could not restore {rel}. Run `git pull`, or get the file from a "
+                     "teammate. Only rebuild it on purpose (src/data/factors.py).")
 
 
 def run_step(label: str, args: list) -> tuple:
@@ -61,7 +91,8 @@ def main() -> None:
     parser.add_argument("--signals", nargs="+", default=None,
                         help=f"signals to run (default: all of {', '.join(available())})")
     parser.add_argument("--config", default="configs/default.yaml")
-    parser.add_argument("--clean", action="store_true", help="rerun clean.py even if its output exists")
+    parser.add_argument("--skip-clean", action="store_true",
+                        help="reuse the cleaned data already in data/interim/")
     parser.add_argument("--skip-validation", action="store_true", help="skip the Ken French comparisons")
     parser.add_argument("--skip-regression", action="store_true", help="skip run_asset_growth.py")
     args = parser.parse_args()
@@ -70,9 +101,17 @@ def main() -> None:
     for name in signals:
         load_signal(name)  # fails now, not halfway through, if a name is wrong
 
+    # 0. Inputs
+    config_path = Path(args.config)
+    if not config_path.is_absolute():
+        config_path = BASE_DIR / config_path
+    cfg = yaml.safe_load(config_path.read_text())
+    check_inputs(args.skip_clean, BASE_DIR / cfg["data"]["factors"])
+
+    # 1-3. Steps, in the order they depend on each other
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     steps = []  # (label, script arguments)
-    if args.clean or not all((INTERIM_DIR / f).exists() for f in CLEAN_FILES):
+    if not args.skip_clean:
         steps.append(("clean data", ["src/data/clean.py"]))
     if not args.skip_regression:
         steps.append(("regression asset_growth", ["scripts/run_asset_growth.py"]))
