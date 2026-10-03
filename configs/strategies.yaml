@@ -1,0 +1,44 @@
+# Config for the strategy search (our new signals). Same keys as default.yaml.
+#   python scripts/run_signal.py --signal <name> --config configs/strategies.yaml
+#
+# Differences from default.yaml:
+# 1. The backtest covers the WHOLE sample 1963-07 to 2025-12. run_signal.py reports
+#    "train", "validation" and "train+validation": here they simply mean the first
+#    half (1963-1994), the second half (1995-2025) and the full sample. The test
+#    period is not used (no --holdout needed).
+# 2. The main universe excludes microcaps (below the NYSE 20th size percentile):
+#    alphas from stocks too small to trade are not credible. "all_stocks" in the
+#    robustness section shows the result with every stock.
+# 3. The headline alphas are CAPM, FF6 and q5 (the hardest benchmarks).
+
+data:
+  factors: data/external/factors_monthly.csv
+
+periods:
+  train: ["1963-07", "1994-12"]        # first half
+  validation: ["1995-01", "2025-12"]   # second half
+  test: ["2026-01", "2026-12"]         # not used
+
+universe:
+  min_price: null
+  min_nyse_size_pct: 0.2
+  exclude_financials: false
+  exclude_utilities: false
+
+portfolio:
+  n_portfolios: 10            # a signal can override it (dividend_month uses 2)
+  nyse_breakpoints: true
+  weighting: [ew, vw]
+
+costs:
+  one_way_bps: 20
+
+evaluation:
+  models: [CAPM, FF3, FF4, FF5, FF6, q4, q5]
+  headline_models: [CAPM, FF6, q5]
+  newey_west_lags: 6
+
+robustness:
+  all_stocks: {min_nyse_size_pct: null}
+  price_above_5: {min_price: 5}
+  no_fin_util: {exclude_financials: true, exclude_utilities: true}

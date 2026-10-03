@@ -139,7 +139,10 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     weightings = cfg["portfolio"]["weighting"]
-    ports = list(range(1, cfg["portfolio"]["n_portfolios"] + 1))
+    # a signal module can set N_PORTFOLIOS (e.g. 2 for a yes/no signal)
+    portfolio_cfg = {**cfg["portfolio"],
+                     "n_portfolios": getattr(spec, "N_PORTFOLIOS", cfg["portfolio"]["n_portfolios"])}
+    ports = list(range(1, portfolio_cfg["n_portfolios"] + 1))
     bps = cfg["costs"]["one_way_bps"]
     ev = cfg["evaluation"]
     factors = load_factors(BASE_DIR / cfg["data"]["factors"])
@@ -148,7 +151,7 @@ def main() -> None:
     print(f"Loading the panel and computing '{name}' ({spec.REBALANCE} rebalancing)...")
     panel = build_panel(spec)
     print(f"Sorting into {len(ports)} portfolios, months {start} to {end}...")
-    base = backtest(panel, name, spec, sort_options(cfg["universe"], cfg["portfolio"]),
+    base = backtest(panel, name, spec, sort_options(cfg["universe"], portfolio_cfg),
                     weightings, bps, start, end)
     spread = f"{spec.LONG}-{spec.SHORT}"
     net = f"{spread} net"
@@ -205,7 +208,7 @@ def main() -> None:
         else:
             print(f"\nRobustness universe '{variant}': {overrides}")
             res = backtest(panel, name, spec, sort_options({**cfg["universe"], **overrides},
-                           cfg["portfolio"]), weightings, bps, start, end)
+                           portfolio_cfg), weightings, bps, start, end)
         for sample, (s, e) in samples.items():
             n = res["n_stocks"].loc[s:e]
             for w in weightings:
