@@ -2,10 +2,12 @@
 #   python scripts/run_signal.py --signal <name> --config configs/strategies.yaml
 #
 # Differences from default.yaml:
-# 1. The backtest covers the WHOLE sample 1963-07 to 2025-12. run_signal.py reports
-#    "train", "validation" and "train+validation": here they simply mean the first
-#    half (1963-1994), the second half (1995-2025) and the full sample. The test
-#    period is not used (no --holdout needed).
+# 1. The backtest covers the whole sample before the team's holdout, 1963-07 to
+#    2015-12. run_signal.py reports "train", "validation" and "train+validation":
+#    here they simply mean the first half (1963-1994), the second half (1995-2015)
+#    and the full sample. The test period 2016-2025 is the same holdout as in
+#    default.yaml: run_signal.py never shows it without --holdout (HOLDOUT_START in
+#    run_signal.py), and the alpha periods below are cut at 2015-12 until then.
 # 2. The main universe excludes microcaps (below the NYSE 20th size percentile):
 #    alphas from stocks too small to trade are not credible. "all_stocks" in the
 #    robustness section shows the result with every stock.
@@ -18,8 +20,8 @@ data:
 
 periods:
   train: ["1963-07", "1994-12"]        # first half
-  validation: ["1995-01", "2025-12"]   # second half
-  test: ["2026-01", "2026-12"]         # not used
+  validation: ["1995-01", "2015-12"]   # second half
+  test: ["2016-01", "2025-12"]         # holdout, only with --holdout
 
 universe:
   min_price: null

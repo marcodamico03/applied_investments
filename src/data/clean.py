@@ -46,6 +46,22 @@ SHUMWAY_RET_NYSE_AMEX = -0.30
 SHUMWAY_RET_NASDAQ = -0.55
 
 # ------------------------------------------------------------------------------
+# Compustat backfill bias (Banz and Breen 1986). When Compustat adds a firm, it
+# also adds some earlier years of data, and only firms that survived get added.
+# Fama and French (1993) use a fiscal year only if the firm has been on Compustat
+# for two years: MIN_COMPUSTAT_YEARS = 2 does that (the first year is dropped, but
+# still serves as the previous-year value of the second). 1 = no filter.
+# Leave it at 1. Our CCM extract has no year before the CRSP link starts, so the
+# "first year on Compustat" is almost always the first year after listing: on our
+# data (checked 2026-10-04), 75% of the years the filter drops are new listings and
+# only 4.5% look like backfill. It also moves the B/M deciles away from Ken French's
+# (EW 10-1 spread 0.88 instead of 0.98, French 0.98), so his portfolios very
+# likely do not apply it.
+# Setting it to 2 is a robustness check, not a fix.
+# ------------------------------------------------------------------------------
+MIN_COMPUSTAT_YEARS = 1
+
+# ------------------------------------------------------------------------------
 # Compustat columns. Items not in the file are reported and created as missing.
 # ------------------------------------------------------------------------------
 ID_COLS = [
@@ -250,8 +266,12 @@ def clean_compustat(
     comp = filter_equal(comp, "popsrc", "D", "domestic")
     comp = filter_equal(comp, "consol", "C", "consolidated")
 
-    # B. Accounting items as numbers (missing stays missing, no zero-filling)
+    # B. Accounting items as numbers (missing stays missing, no zero-filling).
+    # First fiscal year of each firm on Compustat, before any other filter (for the
+    # backfill filter in F2)
     comp = comp.copy()
+    comp["fyear"] = pd.to_numeric(comp["fyear"], errors="coerce")
+    comp["first_fyear"] = comp.groupby("GVKEY")["fyear"].transform("min")
     for var in ACCOUNTING_ITEMS + ["sich"]:
         comp[var] = pd.to_numeric(comp[var], errors="coerce") if var in comp.columns else np.nan
 
@@ -295,6 +315,14 @@ def clean_compustat(
     lagged[(comp["fyear"] - prev_fyear) != 1] = np.nan
     lagged.columns = [f"{c}_lag" for c in LAG_ITEMS]
     comp = pd.concat([comp, lagged], axis=1).copy()
+
+    # F2. Backfill bias: drop the firm's first year(s) on Compustat (after the lags,
+    # so the second year still has its previous-year values)
+    if MIN_COMPUSTAT_YEARS > 1:
+        too_new = comp["fyear"] - comp["first_fyear"] < MIN_COMPUSTAT_YEARS - 1
+        comp = comp[~too_new]
+        print(f"  -> After dropping years with less than {MIN_COMPUSTAT_YEARS} years on Compustat: "
+              f"{len(comp):,} rows ({too_new.sum():,} dropped)")
 
     # G. Formation year: fiscal year ending in calendar year t-1 is used from July t
     comp["formation_year"] = comp["datadate"].dt.year + 1

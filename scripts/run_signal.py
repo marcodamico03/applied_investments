@@ -8,12 +8,15 @@ Run from the project folder:
     python scripts/run_signal.py --signal momentum --config configs/my_test.yaml
     python scripts/run_signal.py --signal momentum --holdout
 
-Holdout discipline (periods in the config):
-  - Without --holdout, only the train and validation periods are computed, printed
-    and saved. The test years never appear, so nobody can tune on them by accident.
-  - --holdout adds the test period. Run it ONCE per signal, after the signal and
-    the config are frozen. Every holdout run is recorded in holdout_log.txt and
-    the script warns you if the holdout was already used.
+Holdout discipline:
+  - The team's holdout starts in HOLDOUT_START (below), whatever the config says.
+    Without --holdout, every period is cut at the month before it, so the holdout
+    years never appear and nobody can tune on them by accident, even with a config
+    whose periods run later.
+  - --holdout adds the test period of the config. Run it ONCE per signal, after the
+    signal and the config are frozen. Every holdout run is recorded in
+    holdout_log.txt in the project folder (in git, so the whole team sees every use)
+    and the script warns you if the holdout of that signal was already used.
 
 Outputs in results/signals/<signal>/ (with --holdout: results/signals/<signal>/holdout/),
 <w> = ew or vw, <sample> = insample (train + validation) or test:
@@ -27,6 +30,7 @@ Outputs in results/signals/<signal>/ (with --holdout: results/signals/<signal>/h
     n_stocks.csv, breakpoints.csv, run_info.json
 """
 import argparse
+import getpass
 import json
 import sys
 from datetime import datetime
@@ -50,6 +54,12 @@ pd.set_option("display.float_format", lambda x: f"{x:.2f}")
 
 
 PORTFOLIO_KEYS = {"buffer", "nyse_breakpoints"}  # robustness keys that belong to `portfolio`
+
+# First month of the team's holdout, fixed here and not in the configs, so that no
+# config can show it by accident. Only --holdout runs see it, and they are logged.
+HOLDOUT_START = "2016-01"
+LAST_OPEN_MONTH = str(pd.Period(HOLDOUT_START, freq="M") - 1)  # "2015-12"
+HOLDOUT_LOG = BASE_DIR / "holdout_log.txt"
 
 
 def sort_options(universe: dict, portfolio: dict) -> dict:
@@ -100,20 +110,37 @@ def backtest(panel, signal, spec, opts, weightings, bps, start, end) -> dict:
     return out
 
 
-def log_holdout(signal_dir: Path, config_path: Path) -> None:
-    """Record every use of the test period, and warn if it was used before."""
-    signal_dir.mkdir(parents=True, exist_ok=True)
-    log = signal_dir / "holdout_log.txt"
-    previous = log.read_text().splitlines() if log.exists() else []
+def cut_at_holdout(valid: tuple) -> tuple:
+    """Without --holdout: end the validation period (and so every period of the
+    run) at LAST_OPEN_MONTH, whatever the config says."""
+    if valid[1] <= LAST_OPEN_MONTH:
+        return valid
+    if valid[0] > LAST_OPEN_MONTH:
+        sys.exit(f"The validation period starts after {LAST_OPEN_MONTH}, but the months from "
+                 f"{HOLDOUT_START} on are the team's holdout: only --holdout shows them.")
+    print("!" * 78)
+    print(f"!! The config's periods run to {valid[1]}, but the months from {HOLDOUT_START} on are")
+    print(f"!! the team's holdout. Every period is cut at {LAST_OPEN_MONTH}. To see the")
+    print("!! holdout (once, when everything is frozen), rerun with --holdout.")
+    print("!" * 78)
+    return valid[0], LAST_OPEN_MONTH
+
+
+def log_holdout(signal: str, config_path: Path) -> None:
+    """Record every use of the holdout in HOLDOUT_LOG, and warn if the holdout of
+    this signal was used before."""
+    lines = HOLDOUT_LOG.read_text().splitlines() if HOLDOUT_LOG.exists() else []
+    previous = [line for line in lines if f"signal={signal}" in line.split()]
     if previous:
         print("!" * 78)
-        print(f"!! The test period of this signal was already used {len(previous)} time(s):")
+        print(f"!! The holdout of this signal was already used {len(previous)} time(s):")
         for line in previous:
             print(f"!!   {line}")
         print("!! Anything changed after looking at it is no longer out of sample.")
         print("!" * 78)
-    with log.open("a") as f:
-        f.write(f"{datetime.now():%Y-%m-%d %H:%M}  config={config_path.name}\n")
+    with HOLDOUT_LOG.open("a") as f:
+        f.write(f"{datetime.now():%Y-%m-%d %H:%M}  signal={signal}  "
+                f"config={config_path.name}  user={getpass.getuser()}\n")
 
 
 def main() -> None:
@@ -132,6 +159,8 @@ def main() -> None:
 
     # Samples
     train, valid, test = (tuple(cfg["periods"][k]) for k in ("train", "validation", "test"))
+    if not args.holdout:
+        valid = cut_at_holdout(valid)
     in_sample = (train[0], valid[1])
     periods = {"train": train, "validation": valid, "train+validation": in_sample}
     samples = {"insample": in_sample}  # used for alphas, GRS and robustness
@@ -149,7 +178,7 @@ def main() -> None:
 
     out_dir = BASE_DIR / "results" / "signals" / name
     if args.holdout:
-        log_holdout(out_dir, config_path)
+        log_holdout(name, config_path)
         out_dir = out_dir / "holdout"
     out_dir.mkdir(parents=True, exist_ok=True)
 
