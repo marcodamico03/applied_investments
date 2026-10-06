@@ -4,10 +4,15 @@ Run every command from the project folder. Install the packages once with
 `pip install -r requirements.txt`.
 
 To run everything below (except the holdout) in one go: `python scripts/run_all.py`
-(`--signals momentum` for just some signals, `--skip-clean` to reuse the cleaned data).
+(`--signals momentum` for just some signals, `--skip-clean` to reuse the cleaned data,
+`--final` for only our final strategies: the list `final_signals` in
+`configs/strategies.yaml`).
 
 To pick any single step from a menu instead of typing the command:
-`python scripts/menu.py` (it shows the exact command before running it).
+`python scripts/menu.py` (it shows the exact command before running it). The menu
+reads the signals from `src/signals/`, the configs from `configs/` and the final
+strategies from `final_signals` in `configs/strategies.yaml`, so a new or changed
+signal shows up without touching the menu's code.
 
 ## Once: data
 1. Put the WRDS files in `data/raw/` (`crsp_monthly.csv`, `ccm_funda.csv`).
@@ -21,7 +26,9 @@ uses the same vintage. Only rebuild it on purpose (`python src/data/factors.py`)
 ## For each signal
 1. Add `src/signals/<name>.py`: copy `asset_growth.py` (accounting data) or
    `momentum.py` (market data) and change the formula. The rules are in
-   `src/signals/__init__.py`.
+   `src/signals/__init__.py`. The signal is in the menu and in `run_all.py` at once;
+   to make it a final strategy, add its name to `final_signals` in
+   `configs/strategies.yaml`.
 2. For a published anomaly, compare it with Ken French's portfolios:
    `python scripts/validate_signal.py --signal <name>`
 3. Backtest on train + validation:

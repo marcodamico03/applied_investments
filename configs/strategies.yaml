@@ -14,6 +14,12 @@
 # 3. The headline alphas are CAPM, FF6, q5 (the hardest benchmarks) and q5+STR
 #    (q5 plus short-term reversal, needs `python src/data/factors.py --add-reversal`).
 # 4. Robustness adds a turnover buffer variant (portfolio.buffer, see sorts.py).
+# 5. final_signals: our final strategies (file names in src/signals/).
+#    `python scripts/run_all.py --final` backtests them with this config, and the
+#    menu (scripts/menu.py) offers them. To add or drop a strategy, edit this list:
+#    no code to change.
+
+final_signals: [seasonality_idio, alpha_combo2, hybrid_combo]
 
 data:
   factors: data/external/factors_monthly.csv

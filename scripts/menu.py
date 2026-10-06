@@ -8,15 +8,23 @@ Run from the project folder:
 
 At every question: Enter takes the value in [brackets], b goes back to the menu,
 q quits. Ctrl+C stops a running script and brings you back to the menu.
+
+Nothing about the signals is written in this file: the lists are read from
+src/signals/ (every file there, re-read each time a list is shown, so a signal
+added or edited while the menu is open shows up at once), configs/*.yaml, and
+final_signals in configs/strategies.yaml (the final strategies, marked *).
 """
+import importlib
 import subprocess
 import sys
 from pathlib import Path
-from typing import List, Optional
+from types import ModuleType
+from typing import Dict, List, Optional
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))  # lets Python find the "src" folder
 
+from run_all import FINAL_CONFIG, final_signals  # noqa: E402  (scripts/run_all.py)
 from src.signals import available, load_signal  # noqa: E402
 
 CONFIG_DIR = BASE_DIR / "configs"
@@ -81,19 +89,49 @@ def shorten(text: str, width: int = 58) -> str:
     return text if len(text) <= width else text[:width - 3] + "..."
 
 
-def describe_signal(name: str) -> str:
-    """'momentum          monthly  Momentum signal (Jegadeesh and Titman 1993), ...'"""
-    spec = load_signal(name)
-    lines = (spec.__doc__ or "").strip().splitlines()
-    return f"{name:<17} {spec.REBALANCE:<8} {shorten(lines[0] if lines else '')}"
+def read_signals() -> Dict[str, ModuleType]:
+    """Every signal of src/signals/ that loads, read again from its file (not the copy
+    Python kept from the last list). A file with an error is left out with a message,
+    instead of stopping the menu."""
+    importlib.invalidate_caches()
+    for module in [m for m in sys.modules if m.startswith("src.signals.")]:
+        del sys.modules[module]
+    specs = {}
+    for name in available():
+        try:
+            specs[name] = load_signal(name)
+        except Exception as e:  # noqa: BLE001 (any error in the signal's file)
+            print(f"!! src/signals/{name}.py left out, it does not load: {e.__class__.__name__}: {e}")
+    return specs
 
 
-def pick_signal(names: Optional[List[str]] = None) -> str:
-    names = names or available()
-    return names[pick_one("Which signal?", [describe_signal(n) for n in names])]
+def signal_labels(specs: Dict[str, ModuleType]) -> List[str]:
+    """'* hybrid_combo     monthly  Hybrid: half slow_combo (annual, low turnover), ...'"""
+    finals = final_signals()
+    width = max(map(len, specs), default=0)
+    labels = []
+    for name, spec in specs.items():
+        lines = (spec.__doc__ or "").strip().splitlines()
+        mark = "*" if name in finals else " "
+        labels.append(f"{mark} {name:<{width}} {spec.REBALANCE:<8} {shorten(lines[0] if lines else '')}")
+    return labels
 
 
-def pick_config() -> str:
+def pick_signal(specs: Optional[Dict[str, ModuleType]] = None) -> str:
+    specs = read_signals() if specs is None else specs
+    if not specs:
+        print("\n!! No signal to choose from.")
+        raise Back
+    title = f"Which signal? (* = final strategy, final_signals in {FINAL_CONFIG})"
+    return list(specs)[pick_one(title, signal_labels(specs))]
+
+
+def config_for(signal: str) -> str:
+    """Config proposed by default: the final strategies' config for a final strategy."""
+    return Path(FINAL_CONFIG).name if signal in final_signals() else "default.yaml"
+
+
+def pick_config(default: str = "default.yaml") -> str:
     """configs/<file>.yaml, default.yaml first. Each one is shown with its first comment line."""
     files = sorted(CONFIG_DIR.glob("*.yaml"), key=lambda p: (p.name != "default.yaml", p.name))
     labels = []
@@ -101,7 +139,9 @@ def pick_config() -> str:
         comments = [l for l in path.read_text(encoding="utf-8").splitlines() if l.startswith("#")]
         about = comments[0].lstrip("# ").strip() if comments else ""
         labels.append(f"{path.name:<17} {shorten(about)}")
-    return f"configs/{files[pick_one('Which config?', labels, default=0)].name}"
+    names = [p.name for p in files]
+    start = names.index(default) if default in names else 0
+    return f"configs/{files[pick_one('Which config?', labels, default=start)].name}"
 
 
 # ------------------------------------------------------------------------------
@@ -125,29 +165,39 @@ def asset_growth_alphas() -> List[str]:
 
 
 def validate() -> List[str]:
-    names = [n for n in available() if getattr(load_signal(n), "FRENCH_BENCHMARK", None)]
-    return ["scripts/validate_signal.py", "--signal", pick_signal(names)]
+    specs = {n: s for n, s in read_signals().items() if getattr(s, "FRENCH_BENCHMARK", None)}
+    return ["scripts/validate_signal.py", "--signal", pick_signal(specs)]
 
 
 def backtest() -> List[str]:
     signal = pick_signal()
-    return ["scripts/run_signal.py", "--signal", signal, "--config", pick_config()]
+    return ["scripts/run_signal.py", "--signal", signal, "--config", pick_config(config_for(signal))]
 
 
 def pipeline() -> List[str]:
+    specs = read_signals()
+    finals = final_signals()
     mode = pick_one("Which signals?", [
         "All signals",
-        "Only the final strategies (--final: configs/strategies.yaml, no French or asset growth check)",
+        f"Only the final strategies (--final, {FINAL_CONFIG}, no French or asset growth "
+        f"check): {', '.join(finals) or 'none listed'}",
         "Choose the signals",
     ])
     args = ["scripts/run_all.py"]
     if mode == 1:
+        wrong = [n for n in finals if n not in specs]
+        if not finals or wrong:
+            print(f"\n!! Fix final_signals in {FINAL_CONFIG} first: " + (
+                f"no file in src/signals/ or a file that does not load: {', '.join(wrong)}"
+                if wrong else "the list is empty."))
+            raise Back
         args.append("--final")
     else:
         if mode == 2:
-            names = available()
-            chosen = pick_many("Which signals?", [describe_signal(n) for n in names])
-            args += ["--signals"] + [names[i] for i in chosen]
+            chosen = pick_many("Which signals? (* = final strategy)", signal_labels(specs))
+            args += ["--signals"] + [list(specs)[i] for i in chosen]
+        elif len(specs) < len(available()):  # leave out the files that do not load (listed above)
+            args += ["--signals", *specs]
         args += ["--config", pick_config()]
         if not yes("Compare with Ken French (signals that have a benchmark)?", True):
             args.append("--skip-validation")
@@ -174,7 +224,7 @@ def holdout() -> List[str]:
         print(f"\n!! The holdout of '{signal}' was already used {len(previous)} time(s):")
         for line in previous:
             print(f"!!   {line}")
-    config = pick_config()
+    config = pick_config(config_for(signal))
     if ask(f"Type the signal name ({signal}) to confirm") != signal:
         print("Not confirmed: nothing was run.")
         raise Back
@@ -237,6 +287,8 @@ def main() -> None:
         except (Quit, EOFError, KeyboardInterrupt):
             print("\nBye.")
             return
+        except Exception as e:  # noqa: BLE001 (e.g. a config being edited): back to the menu
+            print(f"\n!! {e.__class__.__name__}: {e}")
 
 
 if __name__ == "__main__":

@@ -12,7 +12,8 @@ Run from the project folder:
     python scripts/run_all.py --signals momentum book_to_market
     python scripts/run_all.py --skip-clean      # reuse data/interim/ (faster)
     python scripts/run_all.py --config configs/my_test.yaml
-    python scripts/run_all.py --final --skip-clean   # only our 3 final strategies
+    python scripts/run_all.py --final --skip-clean   # only our final strategies
+                                                     # (final_signals in configs/strategies.yaml)
 
 Never touches the test period: there is no --holdout here on purpose. Run
     python scripts/run_signal.py --signal <name> --holdout
@@ -42,9 +43,16 @@ INTERIM_DIR = BASE_DIR / "data" / "interim"
 CLEAN_FILES = ["crsp_clean.parquet", "compustat_clean.parquet"]
 LOG_DIR = BASE_DIR / "results" / "logs"
 
-# --final: our final strategies, with the project config, no validation/regression
-FINAL_SIGNALS = ["seasonality_idio", "alpha_combo2", "hybrid_combo"]
+# --final: our final strategies, with the project config, no validation/regression.
+# The list of strategies is the key final_signals of that config (edit it there).
 FINAL_CONFIG = "configs/strategies.yaml"
+
+
+def final_signals() -> list:
+    """The signals listed under final_signals in FINAL_CONFIG ([] if none)."""
+    path = BASE_DIR / FINAL_CONFIG
+    names = (yaml.safe_load(path.read_text()) or {}).get("final_signals") if path.exists() else None
+    return [names] if isinstance(names, str) else list(names or [])
 
 
 def check_inputs(skip_clean: bool, factors_file: Path) -> None:
@@ -101,11 +109,14 @@ def main() -> None:
     parser.add_argument("--skip-validation", action="store_true", help="skip the Ken French comparisons")
     parser.add_argument("--skip-regression", action="store_true", help="skip run_asset_growth.py")
     parser.add_argument("--final", action="store_true",
-                        help=f"only the final strategies ({', '.join(FINAL_SIGNALS)}) with "
-                             f"{FINAL_CONFIG}, skipping validation and regression")
+                        help=f"only the final strategies (final_signals in {FINAL_CONFIG}: "
+                             f"{', '.join(final_signals()) or 'none listed'}) with that config, "
+                             "skipping validation and regression")
     args = parser.parse_args()
     if args.final:
-        args.signals = args.signals or FINAL_SIGNALS
+        args.signals = args.signals or final_signals()
+        if not args.signals:
+            sys.exit(f"--final: no final_signals listed in {FINAL_CONFIG}.")
         args.config = FINAL_CONFIG
         args.skip_validation = args.skip_regression = True
 
