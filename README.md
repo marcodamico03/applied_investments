@@ -15,7 +15,9 @@ strategies from `final_signals` in `configs/strategies.yaml`, so a new or change
 signal shows up without touching the menu's code.
 
 ## Once: data
-1. Put the WRDS files in `data/raw/` (`crsp_monthly.csv`, `ccm_funda.csv`).
+1. Put the WRDS files in `data/raw/` (`crsp_monthly.csv`, `ccm_funda.csv`,
+   `crsp_daily.csv`), then `python convert_to_parquet.py crsp_daily.csv` (the daily
+   file is too big to read as CSV; the bid and ask quotes give the trading costs).
 2. `python src/data/clean.py` writes the cleaned tables to `data/interim/`.
 3. `python scripts/run_asset_growth.py` must reproduce the professor's numbers
    (slides 18-27). Rerun it after any change to `clean.py`.
@@ -36,6 +38,9 @@ uses the same vintage. Only rebuild it on purpose (`python src/data/factors.py`)
    This gives portfolio returns, the spread before and after trading costs,
    alphas for CAPM, FF3-FF6 and q4/q5, the GRS test, and the same spread in other
    universes (no microcaps, price above $5, no financials/utilities).
+   Trading costs: every trade pays half the stock's closing bid-ask spread on the
+   last trading day of the month (the formation date). CRSP has quotes for every
+   exchange only from the end of 1992, so the net results start in 1993-01.
    Settings are in `configs/default.yaml`; results go to `results/signals/<name>/`.
 4. Once, at the very end, when the signal and the config are frozen:
    `python scripts/run_signal.py --signal <name> --holdout`

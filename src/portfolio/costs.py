@@ -12,17 +12,25 @@ Equal-weighted portfolios go back to equal weights every month, so they trade a
 little every month even when the list of stocks does not change. Value-weighted
 portfolios mostly trade at the formation date (plus delistings and share issues).
 
-Trading cost: every dollar bought or sold pays `one_way_bps`. A turnover of x
-means x sold plus x bought, so the cost of one portfolio is 2 * x * one_way_bps.
+Trading cost: buying or selling a stock costs half its bid-ask spread, relative to
+the midpoint, (ask - bid) / (ask + bid). The return of month t starts from the
+close of the last trading day of month t-1, so that close is when the backtest
+trades, and every trade pays the stock's closing spread of that day
+(data/interim/spreads_clean.parquet, written by src/data/clean.py):
+    cost(t) = sum over stocks of |w_start(t) - w_end(t-1)| * half_spread(end of t-1)
+A stock with no quote is charged the average spread of the portfolio's other trades
+that month. A month without any quote (before 1993, see clean.py) has an unknown
+cost: NaN, so the net spread starts in 1993-01.
 """
 import pandas as pd
 
 
-def turnover(holdings: pd.DataFrame, weighting: str) -> pd.DataFrame:
-    """Monthly one-way turnover (rows: months, columns: portfolios).
+def weight_changes(holdings: pd.DataFrame, weighting: str) -> pd.DataFrame:
+    """One row per stock, portfolio and month t: change = |w_start(t) - w_end(t-1)|.
     holdings: the 'holdings' table of sort_portfolios(..., return_holdings=True).
-    The weights are the ones sort_portfolios uses for the returns. The first month
-    of a portfolio (nothing held the month before) is left empty."""
+    The weights are the ones sort_portfolios uses for the returns. Only months where
+    the portfolio is held this month AND was held last month (the first month of a
+    portfolio has nothing to compare with)."""
     if weighting == "vw":
         h = holdings[holdings["mcap_lag"] > 0]
         size = h["mcap_lag"]
@@ -43,18 +51,29 @@ def turnover(holdings: pd.DataFrame, weighting: str) -> pd.DataFrame:
     before = h[keys].assign(month=h["month"] + 1, w_end_prev=w_end)
     trades = now.merge(before, on=keys, how="outer").fillna({"w_start": 0.0, "w_end_prev": 0.0})
     trades["change"] = (trades["w_start"] - trades["w_end_prev"]).abs()
-    result = 0.5 * trades.groupby(["month", "port"])["change"].sum().unstack()
 
-    # Only months where the portfolio is held this month AND was held last month
-    held = h.groupby(["month", "port"]).size().unstack()
-    held_before = held.reindex(held.index - 1).set_axis(held.index)
-    return result.reindex(index=held.index, columns=held.columns).where(
-        held.notna() & held_before.notna()
-    )
+    held = h[["month", "port"]].drop_duplicates()
+    held_both = held.merge(held.assign(month=held["month"] + 1), on=["month", "port"])
+    return trades.merge(held_both, on=["month", "port"])[keys + ["change"]]
 
 
-def trading_cost(turnover_long: pd.Series, turnover_short: pd.Series, one_way_bps: float) -> pd.Series:
-    """Monthly cost (as a return) of a long-short spread: both legs pay.
-    A month with unknown turnover (the very first one) costs nothing."""
-    per_dollar = one_way_bps / 10_000
-    return 2 * per_dollar * (turnover_long.fillna(0) + turnover_short.fillna(0))
+def turnover(changes: pd.DataFrame) -> pd.DataFrame:
+    """Monthly one-way turnover (rows: months, columns: portfolios).
+    changes: weight_changes(holdings, weighting)."""
+    return 0.5 * changes.groupby(["month", "port"])["change"].sum().unstack()
+
+
+def trading_cost(changes: pd.DataFrame, spreads: pd.DataFrame) -> pd.DataFrame:
+    """Monthly trading cost of each portfolio, as a return (rows: months, columns:
+    portfolios). changes: weight_changes(holdings, weighting); spreads: load_spreads()
+    of src/data/panel.py."""
+    # the trades of month t are made at the last close of month t-1
+    quotes = spreads.assign(month=spreads["month"] + 1)
+    t = changes.merge(quotes, on=["PERMNO", "month"], how="left")
+    group = [t["month"], t["port"]]
+    paid = (t["change"] * t["half_spread"]).groupby(group).sum()
+    traded = t["change"].groupby(group).sum()
+    traded_quoted = t["change"].where(t["half_spread"].notna(), 0.0).groupby(group).sum()
+    # trades without a quote pay the average of the quoted ones; none quoted: 0/0 = NaN
+    cost = paid / traded_quoted * traded
+    return cost.where(traded > 0, 0.0).unstack()

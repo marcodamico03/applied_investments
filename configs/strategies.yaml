@@ -41,8 +41,8 @@ portfolio:
   weighting: [ew, vw]
   buffer: 0                   # turnover buffer, 0 = off (the "buffer" robustness variant uses 2)
 
-costs:
-  one_way_bps: 20
+# Trading costs: half the closing bid-ask spread per trade, net results from 1993-01
+# (see default.yaml).
 
 evaluation:
   models: [CAPM, FF3, FF4, FF5, FF6, q4, q5, FF6+STR, q5+STR]

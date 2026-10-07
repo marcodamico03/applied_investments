@@ -24,8 +24,18 @@ BASE_DIR = next(
 INTERIM_DIR = BASE_DIR / "data" / "interim"
 CRSP_FILE = INTERIM_DIR / "crsp_clean.parquet"
 COMP_FILE = INTERIM_DIR / "compustat_clean.parquet"
+SPREAD_FILE = INTERIM_DIR / "spreads_clean.parquet"
 
 KEYS = ["PERMNO", "MthCalDt", "formation_year"]
+
+
+def load_spreads() -> pd.DataFrame:
+    """Half bid-ask spread of each stock at the last close of each month (written by
+    src/data/clean.py). Columns PERMNO, month (monthly period, like the holdings of
+    sort_portfolios), half_spread."""
+    spreads = pd.read_parquet(SPREAD_FILE, columns=["PERMNO", "month_end", "half_spread"])
+    spreads["month"] = spreads["month_end"].dt.to_period("M")
+    return spreads[["PERMNO", "month", "half_spread"]]
 
 
 def load_panel(

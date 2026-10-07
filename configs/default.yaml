@@ -31,10 +31,10 @@ portfolio:
   nyse_breakpoints: true      # quantile cutoffs from NYSE stocks only (false: all stocks)
   weighting: [ew, vw]
 
-costs:
-  # Cost of every trade, in basis points of the amount bought or sold. Both legs of
-  # the spread pay it on their turnover (see src/portfolio/costs.py).
-  one_way_bps: 20
+# Trading costs are not a setting: every trade pays half the stock's closing bid-ask
+# spread on the formation date, from the CRSP daily quotes (src/portfolio/costs.py).
+# CRSP has quotes for every exchange only from the end of 1992, so the net spread
+# and net alphas start in 1993-01.
 
 evaluation:
   models: [CAPM, FF3, FF4, FF5, FF6, q4, q5]   # names defined in src/evaluation/alpha.py

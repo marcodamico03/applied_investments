@@ -28,7 +28,8 @@ from run_all import FINAL_CONFIG, final_signals  # noqa: E402  (scripts/run_all.
 from src.signals import available, load_signal  # noqa: E402
 
 CONFIG_DIR = BASE_DIR / "configs"
-CLEAN_FILES = [BASE_DIR / "data" / "interim" / f for f in ("crsp_clean.parquet", "compustat_clean.parquet")]
+CLEAN_FILES = [BASE_DIR / "data" / "interim" / f
+               for f in ("crsp_clean.parquet", "compustat_clean.parquet", "spreads_clean.parquet")]
 HOLDOUT_LOG = BASE_DIR / "holdout_log.txt"
 
 

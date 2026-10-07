@@ -38,9 +38,9 @@ sys.path.insert(0, str(BASE_DIR))  # lets Python find the "src" folder
 from src.signals import available, load_signal  # noqa: E402
 
 RAW_DIR = BASE_DIR / "data" / "raw"
-RAW_FILES = ["crsp_monthly.csv", "ccm_funda.csv"]
+RAW_FILES = ["crsp_monthly.csv", "ccm_funda.csv", "crsp_daily.parquet"]
 INTERIM_DIR = BASE_DIR / "data" / "interim"
-CLEAN_FILES = ["crsp_clean.parquet", "compustat_clean.parquet"]
+CLEAN_FILES = ["crsp_clean.parquet", "compustat_clean.parquet", "spreads_clean.parquet"]
 LOG_DIR = BASE_DIR / "results" / "logs"
 
 # --final: our final strategies, with the project config, no validation/regression.
@@ -62,7 +62,9 @@ def check_inputs(skip_clean: bool, factors_file: Path) -> None:
         hint = "Run without --skip-clean to build them from data/raw/."
     else:
         missing = [RAW_DIR / f for f in RAW_FILES if not (RAW_DIR / f).exists()]
-        hint = "Download them from WRDS and put them in data/raw/ with exactly these names."
+        hint = ("Download them from WRDS and put them in data/raw/ with exactly these names.\n"
+                "crsp_daily.parquet: put crsp_daily.csv in data/raw/ and run "
+                "`python convert_to_parquet.py crsp_daily.csv`.")
     if missing:
         sys.exit("Missing input files:\n" + "\n".join(f"  {p}" for p in missing) + f"\n{hint}")
 

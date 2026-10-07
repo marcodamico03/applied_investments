@@ -1,5 +1,5 @@
 """
-Strategy-agnostic cleaning of CRSP monthly and Compustat annual data.
+Strategy-agnostic cleaning of CRSP monthly, Compustat annual and CRSP daily quotes.
 
 Run ONCE (and again only if you fix a data problem, never for a new strategy):
     python <folder>/clean.py
@@ -8,6 +8,8 @@ Outputs (Parquet, needs `pip install pyarrow`):
     data/interim/crsp_clean.parquet       one row per stock-month (all eligible stocks)
     data/interim/compustat_clean.parquet  one row per stock and formation year,
                                           all accounting items + previous-year values
+    data/interim/spreads_clean.parquet    one row per stock-month: half bid-ask spread
+                                          at the month's last close (trading costs)
 
 No strategy signal is computed here. Signals live in src/signals/ and the two
 tables are merged on demand by src/data/panel.py (load_panel).
@@ -16,6 +18,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 
 # ------------------------------------------------------------------------------
 # Paths (same as before: the folder must be called "data" in lowercase)
@@ -60,6 +63,24 @@ SHUMWAY_RET_NASDAQ = -0.55
 # Setting it to 2 is a robustness check, not a fix.
 # ------------------------------------------------------------------------------
 MIN_COMPUSTAT_YEARS = 1
+
+# ------------------------------------------------------------------------------
+# Bid-ask spreads (trading costs), from the closing quotes of CRSP daily
+# (data/raw/crsp_daily.parquet: `python convert_to_parquet.py crsp_daily.csv`).
+# CRSP has closing quotes for NASDAQ since 1973 but for NYSE/AMEX only since the
+# end of December 1992; before, only on days a stock did not trade. Checked on our
+# extract (2026-10-07): NYSE stocks with a quote on the last day of the month, 1% in
+# 1992-11, 98% in 1992-12. So the quotes are used from QUOTES_FROM on, for every
+# exchange: the trading costs (and the net spread) start in 1993-01.
+# A stock without a quote on the last day of the month gets its last earlier quote,
+# at most MAX_QUOTE_AGE_DAYS old. That fills CRSP's gap in NYSE quotes from 2000-10
+# to 2001-04 (only 10-60% of NYSE stocks have a month-end quote in those months).
+# Quotes with (ask - bid) / midpoint above MAX_RELATIVE_SPREAD are data errors and
+# are dropped (0.14% of month-end quotes 1993-2015, mostly penny stocks).
+# ------------------------------------------------------------------------------
+QUOTES_FROM = "1992-12-01"
+MAX_QUOTE_AGE_DAYS = 365
+MAX_RELATIVE_SPREAD = 0.5
 
 # ------------------------------------------------------------------------------
 # Compustat columns. Items not in the file are reported and created as missing.
@@ -122,7 +143,7 @@ def clean_crsp(
     input_file: Path = RAW_DIR / "crsp_monthly.csv",
     output_file: Path = INTERIM_DIR / "crsp_clean.parquet",
 ) -> pd.DataFrame:
-    print(f"\n[1/3] Loading CRSP Monthly Data from: {input_file}")
+    print(f"\n[1/4] Loading CRSP Monthly Data from: {input_file}")
     if not input_file.exists():
         raise FileNotFoundError(f"Missing file: {input_file}")
 
@@ -246,7 +267,7 @@ def clean_compustat(
     input_file: Path = RAW_DIR / "ccm_funda.csv",
     output_file: Path = INTERIM_DIR / "compustat_clean.parquet",
 ) -> pd.DataFrame:
-    print(f"\n[2/3] Loading Compustat Fundamentals Annual from: {input_file}")
+    print(f"\n[2/4] Loading Compustat Fundamentals Annual from: {input_file}")
     if not input_file.exists():
         raise FileNotFoundError(f"Missing file: {input_file}")
 
@@ -346,7 +367,7 @@ def clean_compustat(
 # 3. MERGE CHECK (the merge itself is done on demand by src/data/panel.py)
 # ==============================================================================
 def check_merge(crsp: pd.DataFrame, comp: pd.DataFrame) -> None:
-    print("\n[3/3] Checking the CRSP-Compustat merge")
+    print("\n[3/4] Checking the CRSP-Compustat merge")
     panel = crsp[["PERMNO", "MthCalDt", "formation_year"]].merge(
         comp[["LPERMNO", "formation_year", "datadate"]],
         left_on=["PERMNO", "formation_year"],
@@ -363,7 +384,77 @@ def check_merge(crsp: pd.DataFrame, comp: pd.DataFrame) -> None:
     print(f"  -> Share of stock-months with accounting data: {panel['datadate'].notna().mean():.1%}")
 
 
+# ==============================================================================
+# 4. BID-ASK SPREADS (CRSP daily)
+# ==============================================================================
+def clean_spreads(
+    input_file: Path = RAW_DIR / "crsp_daily.parquet",
+    output_file: Path = INTERIM_DIR / "spreads_clean.parquet",
+) -> pd.DataFrame:
+    """Half bid-ask spread of every stock at the last close of every month, the
+    cost of a trade per dollar: (ask - bid) / (ask + bid). One row per stock-month:
+        month_end    last trading day of the month (whole market)
+        quote_day    day of the quote used: month_end, or the stock's last earlier
+                     quote (at most MAX_QUOTE_AGE_DAYS old)
+        half_spread  missing if no quote; 0 in the month a stock stops trading for
+                     good (delisting): that exit is not a trade of ours."""
+    print(f"\n[4/4] Loading CRSP daily quotes from: {input_file}")
+    if not input_file.exists():
+        raise FileNotFoundError(f"Missing file: {input_file} "
+                                "(put crsp_daily.csv in data/raw and run: "
+                                "python convert_to_parquet.py crsp_daily.csv)")
+
+    # Too big for memory (100M+ rows): read one row group at a time and keep, for
+    # each stock-month, its last day in the file and its last valid quote
+    source = pq.ParquetFile(input_file)
+    last_days, quotes = [], []
+    for i in range(source.num_row_groups):
+        d = source.read_row_group(i, columns=["PERMNO", "DlyCalDt", "DlyBid", "DlyAsk"]).to_pandas()
+        d = d[d["DlyCalDt"] >= QUOTES_FROM]
+        d["month"] = d["DlyCalDt"].dt.to_period("M")
+        last_days.append(d.groupby(["PERMNO", "month"])["DlyCalDt"].max())
+        d["half_spread"] = (d["DlyAsk"] - d["DlyBid"]) / (d["DlyAsk"] + d["DlyBid"])
+        valid = (d["DlyBid"] > 0) & d["half_spread"].between(0, MAX_RELATIVE_SPREAD / 2)
+        quotes.append(d[valid].sort_values(["PERMNO", "DlyCalDt"])
+                      .drop_duplicates(["PERMNO", "month"], keep="last"))
+    print(f"  -> Daily rows read: {source.metadata.num_rows:,} (quotes used from {QUOTES_FROM[:7]})")
+
+    # A stock-month can be split over two row groups
+    spreads = pd.concat(last_days).groupby(level=["PERMNO", "month"]).max().rename("last_day").reset_index()
+    quotes = (pd.concat(quotes).sort_values(["PERMNO", "DlyCalDt"])
+              .drop_duplicates(["PERMNO", "month"], keep="last")
+              .rename(columns={"DlyCalDt": "quote_day"})[["PERMNO", "month", "quote_day", "half_spread"]])
+    spreads = spreads.merge(quotes, on=["PERMNO", "month"], how="left").sort_values(["PERMNO", "month"])
+    spreads["month_end"] = spreads.groupby("month")["last_day"].transform("max")
+    on_last_day = (spreads["quote_day"] == spreads["month_end"]).mean()
+
+    # No quote on the last day: the stock's last earlier quote, if recent enough
+    spreads[["quote_day", "half_spread"]] = spreads.groupby("PERMNO")[["quote_day", "half_spread"]].ffill()
+    too_old = (spreads["month_end"] - spreads["quote_day"]).dt.days > MAX_QUOTE_AGE_DAYS
+    spreads.loc[too_old, "quote_day"] = pd.NaT
+    spreads.loc[too_old, "half_spread"] = np.nan
+
+    # Stops trading during its last month in the file (delisting): exit costs nothing
+    stopped = ((spreads["month"] == spreads.groupby("PERMNO")["month"].transform("max"))
+               & (spreads["last_day"] < spreads["month_end"]))
+    spreads.loc[stopped, "quote_day"] = pd.NaT
+    spreads.loc[stopped, "half_spread"] = 0.0
+
+    print(f"  -> Stock-months: {len(spreads):,}. Quote on the month's last day: {on_last_day:.1%}, "
+          f"earlier quote: {spreads['quote_day'].notna().mean() - on_last_day:.1%}, "
+          f"stopped trading: {stopped.mean():.1%}, no quote: {spreads['half_spread'].isna().mean():.1%}")
+    by_year = spreads.groupby(spreads["month"].dt.year)["half_spread"].median() * 10_000
+    print("     Median half spread (bps, all CRSP securities) in "
+          + ", ".join(f"{y}: {by_year[y]:.0f}" for y in by_year.index[::5]))
+
+    spreads_clean = spreads[["PERMNO", "month_end", "quote_day", "half_spread"]].reset_index(drop=True)
+    spreads_clean.to_parquet(output_file, index=False)
+    print(f"  -> Saved clean spreads to: {output_file} {spreads_clean.shape}")
+    return spreads_clean
+
+
 if __name__ == "__main__":
     crsp_clean = clean_crsp()
     comp_clean = clean_compustat()
     check_merge(crsp_clean, comp_clean)
+    clean_spreads()
