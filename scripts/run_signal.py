@@ -21,9 +21,10 @@ Holdout discipline:
 Outputs in results/signals/<signal>/ (with --holdout: results/signals/<signal>/holdout/),
 <w> = ew or vw, <sample> = insample (train + validation) or test:
     returns_<w>.csv           monthly portfolio returns, gross spread and net spread
-                              (net of half the bid-ask spread per trade, from 1993-01)
+                              (net of half the bid-ask spread and the price impact)
     turnover_<w>.csv          monthly one-way turnover of each portfolio
     costs_<w>.csv             monthly trading cost of each portfolio, as a return
+                              (costs_spread_<w>.csv, costs_impact_<w>.csv: the two parts)
     portfolios_<w>.csv        average return, std and t-stat of each portfolio (in sample)
     spread.csv                spread by period: average, t, Sharpe, before and after costs
     alphas_<sample>_<w>.csv   alpha (% per month) and Newey-West t of every portfolio
@@ -47,7 +48,7 @@ sys.path.insert(0, str(BASE_DIR))  # lets Python find the "src" folder
 from src.data.panel import load_spreads  # noqa: E402
 from src.evaluation.alpha import MODELS, alpha_table, grs_test, load_factors, regress  # noqa: E402
 from src.evaluation.performance import spread_stats  # noqa: E402
-from src.portfolio.costs import trading_cost, turnover, weight_changes  # noqa: E402
+from src.portfolio.costs import aum_path, trading_cost, turnover, weight_changes  # noqa: E402
 from src.portfolio.sorts import FINANCIALS, UTILITIES, sort_portfolios, summarize  # noqa: E402
 from src.signals import build_panel, load_signal  # noqa: E402
 
@@ -57,6 +58,23 @@ pd.set_option("display.float_format", lambda x: f"{x:.2f}")
 
 
 PORTFOLIO_KEYS = {"buffer", "nyse_breakpoints"}  # robustness keys that belong to `portfolio`
+# robustness keys that belong to `costs` (e.g. a variant with spread costs only)
+COST_KEYS = {"price_impact", "aum_musd", "aum_ref_month", "aum_scale", "impact_shape",
+             "execution_days"}
+COST_DEFAULTS = {"price_impact": False, "aum_musd": 100, "aum_ref_month": "2025-12",
+                 "aum_scale": "volume", "impact_shape": "linear", "execution_days": 1}
+
+
+def cost_settings(panel: pd.DataFrame, spreads: pd.DataFrame, costs_cfg: dict) -> tuple:
+    """The `impact` argument of trading_cost (None = spread only) and a label."""
+    c = {**COST_DEFAULTS, **(costs_cfg or {})}
+    if not c["price_impact"]:
+        return None, "half bid-ask spread"
+    aum = aum_path(spreads, panel, c["aum_musd"] * 1e6, c["aum_ref_month"], c["aum_scale"])
+    impact = {"aum": aum, "shape": c["impact_shape"], "execution_days": c["execution_days"]}
+    return impact, (f"half bid-ask spread + {c['impact_shape']} price impact, fund of "
+                    f"${c['aum_musd']}m per leg in {c['aum_ref_month']} (scaled with "
+                    f"{c['aum_scale'].replace('_', ' ')}), {c['execution_days']} day(s) to trade")
 
 # First month of the team's holdout, fixed here and not in the configs, so that no
 # config can show it by accident. Only --holdout runs see it, and they are logged.
@@ -93,7 +111,7 @@ def by_formation_month(breakpoints: pd.DataFrame, rebalance: str) -> pd.DataFram
     return breakpoints.set_axis(idx).rename_axis("formation")
 
 
-def backtest(panel, signal, spec, opts, weightings, spreads, start, end) -> dict:
+def backtest(panel, signal, spec, opts, weightings, spreads, start, end, impact=None) -> dict:
     """Sort the stocks, then for each weighting: portfolio returns, turnover, trading
     costs, and the gross and net long-short spread. Everything is cut to the months
     start..end."""
@@ -108,12 +126,16 @@ def backtest(panel, signal, spec, opts, weightings, spreads, start, end) -> dict
         # trades need the month before `start`, so they are computed on all months first
         changes = weight_changes(res["holdings"], w)
         to = turnover(changes).reindex(index=rets.index, columns=rets.columns)
-        cost = trading_cost(changes, spreads).reindex(index=rets.index, columns=rets.columns)
+        parts = {k: v.reindex(index=rets.index, columns=rets.columns)
+                 for k, v in trading_cost(changes, spreads, impact).items()}
+        cost = parts["total"]
         rets[spread] = rets[spec.LONG] - rets[spec.SHORT]
         rets[f"{spread} net"] = rets[spread] - cost[spec.LONG] - cost[spec.SHORT]
         out[w] = rets
         out[f"turnover_{w}"] = to
         out[f"costs_{w}"] = cost
+        out[f"costs_spread_{w}"] = parts["spread"]
+        out[f"costs_impact_{w}"] = parts["impact"]
     return out
 
 
@@ -210,9 +232,11 @@ def main() -> None:
     # 1. Signal and portfolios
     print(f"Loading the panel and computing '{name}' ({spec.REBALANCE} rebalancing)...")
     panel = build_panel(spec)
+    impact, cost_label = cost_settings(panel, spreads, cfg.get("costs"))
+    print(f"Trading costs: {cost_label}")
     print(f"Sorting into {len(ports)} portfolios, months {start} to {end}...")
     base = backtest(panel, name, spec, sort_options(cfg["universe"], portfolio_cfg),
-                    weightings, spreads, start, end)
+                    weightings, spreads, start, end, impact)
     spread = f"{spec.LONG}-{spec.SHORT}"
     net = f"{spread} net"
     base["n_stocks"].to_csv(out_dir / "n_stocks.csv")
@@ -225,6 +249,8 @@ def main() -> None:
         rets.to_csv(out_dir / f"returns_{w}.csv")
         to.to_csv(out_dir / f"turnover_{w}.csv")
         base[f"costs_{w}"].to_csv(out_dir / f"costs_{w}.csv")
+        base[f"costs_spread_{w}"].to_csv(out_dir / f"costs_spread_{w}.csv")
+        base[f"costs_impact_{w}"].to_csv(out_dir / f"costs_impact_{w}.csv")
 
         table = summarize(rets.loc[in_sample[0]:in_sample[1], ports], spec.LONG, spec.SHORT)
         table.to_csv(out_dir / f"portfolios_{w}.csv")
@@ -239,8 +265,28 @@ def main() -> None:
     spread_table = pd.DataFrame(spread_rows).set_index(["weighting", "period"])
     spread_table.to_csv(out_dir / "spread.csv")
     print(f"\n===== Spread {spread} (long {spec.LONG}, short {spec.SHORT}), "
-          f"net of half the bid-ask spread per trade (net from 1993-01) =====")
+          f"net of {cost_label} =====")
     print(spread_table.to_string())
+
+    # What the long-short spread pays, and why
+    cost_rows = []
+    for w in weightings:
+        legs = [spec.LONG, spec.SHORT]
+        for period, (s, e) in periods.items():
+            sp = base[f"costs_spread_{w}"].loc[s:e, legs].sum(axis=1)
+            im = base[f"costs_impact_{w}"].loc[s:e, legs].sum(axis=1)
+            traded = 2 * base[f"turnover_{w}"].loc[s:e, legs].sum(axis=1)
+            cost_rows.append({
+                "weighting": w, "period": period,
+                "Cost % per month": (sp + im).mean() * 100,
+                "Spread part %": sp.mean() * 100,
+                "Impact part %": im.mean() * 100,
+                "bps per $ traded": (sp + im).sum() / traded.sum() * 1e4,
+            })
+    cost_table = pd.DataFrame(cost_rows).set_index(["weighting", "period"])
+    cost_table.to_csv(out_dir / "costs_summary.csv")
+    print(f"\n===== Trading costs of the spread {spread} (both legs) =====")
+    print(cost_table.to_string())
 
     # 3. Alphas and GRS
     for sample, (s, e) in samples.items():
@@ -270,9 +316,14 @@ def main() -> None:
             print(f"\nRobustness variant '{variant}': {overrides}")
             # a variant can change universe keys and portfolio keys (e.g. buffer)
             port_over = {k: v for k, v in overrides.items() if k in PORTFOLIO_KEYS}
-            uni_over = {k: v for k, v in overrides.items() if k not in PORTFOLIO_KEYS}
+            cost_over = {k: v for k, v in overrides.items() if k in COST_KEYS}
+            uni_over = {k: v for k, v in overrides.items()
+                        if k not in PORTFOLIO_KEYS | COST_KEYS}
+            var_impact = (cost_settings(panel, spreads, {**(cfg.get("costs") or {}), **cost_over})[0]
+                          if cost_over else impact)
             res = backtest(panel, name, spec, sort_options({**cfg["universe"], **uni_over},
-                           {**portfolio_cfg, **port_over}), weightings, spreads, start, end)
+                           {**portfolio_cfg, **port_over}), weightings, spreads, start, end,
+                           var_impact)
         for sample, (s, e) in samples.items():
             n = res["n_stocks"].loc[s:e]
             for w in weightings:
@@ -298,8 +349,7 @@ def main() -> None:
     print(robust[shown].to_string())
     shown = ["Net avg %", "Net t", "Cost %", "Net months", "Turnover % long", "Turnover % short"]
     shown += [c for m in ev["headline_models"] for c in (f"{m} net alpha %", f"{m} net t")]
-    print("\n===== AFTER costs (half the bid-ask spread per trade, months from 1993-01): "
-          "net spread and net alphas =====")
+    print(f"\n===== AFTER costs ({cost_label}): net spread and net alphas =====")
     print(robust[shown].to_string())
 
     info = {

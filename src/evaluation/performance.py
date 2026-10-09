@@ -7,9 +7,9 @@ Break-even: the one-way cost per trade (bps) that would wipe out the average
          spread; useful whatever the cost assumption is.
 Sharpe:  annualised, monthly mean / monthly std * sqrt(12). A long-short spread
          costs nothing to set up, so no risk-free rate is subtracted.
-Net:     the spread after the bid-ask costs of src/portfolio/costs.py. Those are
-         known only from 1993-01, so the net figures cover "Net months" only, and
-         "Cost %" is the average monthly cost of both legs over those months.
+Net:     the spread after the trading costs of src/portfolio/costs.py (half
+         spread + price impact). "Net months" is the number of months with a known
+         cost, "Cost %" the average monthly cost of both legs over those months.
 """
 from typing import Dict
 

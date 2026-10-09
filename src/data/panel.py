@@ -30,12 +30,14 @@ KEYS = ["PERMNO", "MthCalDt", "formation_year"]
 
 
 def load_spreads() -> pd.DataFrame:
-    """Half bid-ask spread of each stock at the last close of each month (written by
-    src/data/clean.py). Columns PERMNO, month (monthly period, like the holdings of
-    sort_portfolios), half_spread."""
-    spreads = pd.read_parquet(SPREAD_FILE, columns=["PERMNO", "month_end", "half_spread"])
+    """Trading cost inputs of each stock-month (written by src/data/clean.py):
+    PERMNO, month (monthly period, like the holdings of sort_portfolios),
+    half_spread (at the month's last close; estimated before 1993 for NYSE/AMEX),
+    spread_source, size_group (micro/small/large) and adv (daily dollar volume)."""
+    cols = ["PERMNO", "month_end", "half_spread", "spread_source", "size_group", "adv"]
+    spreads = pd.read_parquet(SPREAD_FILE, columns=cols)
     spreads["month"] = spreads["month_end"].dt.to_period("M")
-    return spreads[["PERMNO", "month", "half_spread"]]
+    return spreads[["PERMNO", "month"] + cols[2:]]
 
 
 def load_panel(

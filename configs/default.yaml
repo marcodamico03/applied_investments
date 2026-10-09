@@ -31,10 +31,18 @@ portfolio:
   nyse_breakpoints: true      # quantile cutoffs from NYSE stocks only (false: all stocks)
   weighting: [ew, vw]
 
-# Trading costs are not a setting: every trade pays half the stock's closing bid-ask
-# spread on the formation date, from the CRSP daily quotes (src/portfolio/costs.py).
-# CRSP has quotes for every exchange only from the end of 1992, so the net spread
-# and net alphas start in 1993-01.
+costs:
+  # Every trade pays half the stock's closing bid-ask spread on the formation date
+  # (CRSP daily quotes; before 1993 an estimate for NYSE/AMEX stocks, see
+  # src/data/cost_inputs.py) plus a price impact that is larger for small stocks
+  # and big trades (src/portfolio/costs.py, professor's slides 21-24).
+  price_impact: true          # false = spread only
+  aum_musd: 100               # fund size per leg, $m, in aum_ref_month
+  aum_ref_month: "2025-12"
+  aum_scale: volume           # fund moves back in time with the market's dollar volume
+                              #   (same share of trading) | market_cap
+  impact_shape: linear        # linear (slides: lambda x % of daily volume) | sqrt
+  execution_days: 1           # days to execute a rebalancing (less volume per day)
 
 evaluation:
   models: [CAPM, FF3, FF4, FF5, FF6, q4, q5]   # names defined in src/evaluation/alpha.py

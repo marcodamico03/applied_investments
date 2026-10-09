@@ -38,9 +38,13 @@ uses the same vintage. Only rebuild it on purpose (`python src/data/factors.py`)
    This gives portfolio returns, the spread before and after trading costs,
    alphas for CAPM, FF3-FF6 and q4/q5, the GRS test, and the same spread in other
    universes (no microcaps, price above $5, no financials/utilities).
-   Trading costs: every trade pays half the stock's closing bid-ask spread on the
-   last trading day of the month (the formation date). CRSP has quotes for every
-   exchange only from the end of 1992, so the net results start in 1993-01.
+   Trading costs (`costs` in the config): every trade pays half the stock's closing
+   bid-ask spread on the last trading day of the month (the formation date) plus a
+   price impact, larger for small stocks and big trades (professor's slides 21-24,
+   `src/portfolio/costs.py`). CRSP has NYSE/AMEX quotes only from the end of 1992:
+   before, their spread is estimated from size, price, volatility and the NASDAQ
+   quotes of the same year (`src/data/cost_inputs.py`), so the net results cover
+   the whole sample.
    Settings are in `configs/default.yaml`; results go to `results/signals/<name>/`.
 4. Once, at the very end, when the signal and the config are frozen:
    `python scripts/run_signal.py --signal <name> --holdout`

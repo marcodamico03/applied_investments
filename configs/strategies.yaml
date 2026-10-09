@@ -41,8 +41,18 @@ portfolio:
   weighting: [ew, vw]
   buffer: 0                   # turnover buffer, 0 = off (the "buffer" robustness variant uses 2)
 
-# Trading costs: half the closing bid-ask spread per trade, net results from 1993-01
-# (see default.yaml).
+costs:
+  # Every trade pays half the stock's closing bid-ask spread on the formation date
+  # (CRSP daily quotes; before 1993 an estimate for NYSE/AMEX stocks, see
+  # src/data/cost_inputs.py) plus a price impact that is larger for small stocks
+  # and big trades (src/portfolio/costs.py, professor's slides 21-24).
+  price_impact: true          # false = spread only
+  aum_musd: 100               # fund size per leg, $m, in aum_ref_month
+  aum_ref_month: "2025-12"
+  aum_scale: volume           # fund moves back in time with the market's dollar volume
+                              #   (same share of trading) | market_cap
+  impact_shape: linear        # linear (slides: lambda x % of daily volume) | sqrt
+  execution_days: 1           # days to execute a rebalancing (less volume per day)
 
 evaluation:
   models: [CAPM, FF3, FF4, FF5, FF6, q4, q5, FF6+STR, q5+STR]
@@ -60,3 +70,5 @@ robustness:
   no_fin_util: {exclude_financials: true, exclude_utilities: true}
   large_caps: {min_nyse_size_pct: 0.5}   # only stocks above the NYSE median: cheapest to trade
   buffer: {buffer: 2}         # enter in decile 10 (1), leave only below decile 8 (above 3)
+  impact_sqrt: {impact_shape: sqrt}     # costs: square-root price impact
+  aum_by_mcap: {aum_scale: market_cap}  # costs: fund scaled with market cap (bigger in old years)
