@@ -19,7 +19,7 @@
 #    menu (scripts/menu.py) offers them. To add or drop a strategy, edit this list:
 #    no code to change.
 
-final_signals: [seasonality_idio, alpha_combo2, hybrid_combo]
+final_signals: [intangible_profit]
 
 data:
   factors: data/external/factors_monthly.csv

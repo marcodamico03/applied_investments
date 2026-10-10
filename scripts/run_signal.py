@@ -57,7 +57,7 @@ pd.set_option("display.max_columns", 30)
 pd.set_option("display.float_format", lambda x: f"{x:.2f}")
 
 
-PORTFOLIO_KEYS = {"buffer", "nyse_breakpoints"}  # robustness keys that belong to `portfolio`
+PORTFOLIO_KEYS = {"buffer", "nyse_breakpoints", "hold_months"}  # robustness keys of `portfolio`
 # robustness keys that belong to `costs` (e.g. a variant with spread costs only)
 COST_KEYS = {"price_impact", "aum_musd", "aum_ref_month", "aum_scale", "impact_shape",
              "execution_days"}
@@ -99,6 +99,7 @@ def sort_options(universe: dict, portfolio: dict) -> dict:
         "min_nyse_size_pct": universe.get("min_nyse_size_pct"),
         "exclude_sic": exclude or None,
         "buffer": buffer,
+        "hold_months": portfolio.get("hold_months") or 1,
     }
 
 

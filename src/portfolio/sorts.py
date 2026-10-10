@@ -18,6 +18,9 @@ Two rebalancing modes:
 - "monthly": sort at the end of every month using that month's signal, hold
   the next month. Use this for market signals (momentum, volatility, ...).
   The signal in a row of month m must be known at the end of month m.
+  hold_months = k > 1: sort only every k months (end of March, June, September
+  and December for k = 3) and hold the same stocks for the next k months:
+  fewer trades, but the signal gets older within the k months.
 
 Optional universe filters (applied at each formation date, all off by default):
 - min_price:          drop stocks with price below this value (e.g. 5)
@@ -57,7 +60,8 @@ def prepare_panel(panel: pd.DataFrame, signal: str) -> pd.DataFrame:
     return df
 
 
-def _formation_snapshot(df: pd.DataFrame, signal: str, rebalance: str) -> pd.DataFrame:
+def _formation_snapshot(df: pd.DataFrame, signal: str, rebalance: str,
+                        hold_months: int = 1) -> pd.DataFrame:
     """One row per stock and formation date, with the value used for sorting.
     Also sets df["form_key"]: which formation date each holding month belongs to."""
     info_cols = ["PERMNO", "MthCalDt", "PrimaryExch", "mkt_cap"] + [
@@ -89,7 +93,11 @@ def _formation_snapshot(df: pd.DataFrame, signal: str, rebalance: str) -> pd.Dat
     elif rebalance == "monthly":
         snap = df[info_cols + [signal, "month_id"]].copy()
         snap = snap.rename(columns={signal: "sort_value", "month_id": "form_key"})
-        df["form_key"] = df["month_id"] - 1  # hold in month m what was formed in m-1
+        # hold in month m what was formed at the last formation date before m
+        # (every month if hold_months = 1: formed in m-1)
+        k = int(hold_months)
+        snap = snap[(snap["form_key"] + 1) % k == 0]
+        df["form_key"] = df["month_id"] - 1 - df["month_id"] % k
 
     else:
         raise ValueError("rebalance must be 'annual' or 'monthly'")
@@ -124,9 +132,9 @@ def _apply_filters(
     return snap
 
 
-def _apply_buffer(snap: pd.DataFrame, n_portfolios: int, buffer: int) -> np.ndarray:
+def _apply_buffer(snap: pd.DataFrame, n_portfolios: int, buffer: int, step: int = 1) -> np.ndarray:
     """Portfolio numbers after the buffer rule (see sort_portfolios). Only stocks
-    held in an extreme portfolio at the previous formation date (form_key - 1)
+    held in an extreme portfolio at the previous formation date (form_key - step)
     can be kept there."""
     if not 0 < buffer < n_portfolios / 2:
         raise ValueError("buffer must be between 1 and n_portfolios/2")
@@ -135,7 +143,7 @@ def _apply_buffer(snap: pd.DataFrame, n_portfolios: int, buffer: int) -> np.ndar
     top, bottom = n_portfolios, 1
     prev_key, prev_top, prev_bottom = None, np.array([]), np.array([])
     for key, idx in sorted(snap.groupby("form_key").indices.items()):
-        if prev_key is not None and key == prev_key + 1:
+        if prev_key is not None and key == prev_key + step:
             stay_top = np.isin(ids[idx], prev_top) & (port[idx] >= top - buffer)
             stay_bottom = np.isin(ids[idx], prev_bottom) & (port[idx] <= bottom + buffer)
             port[idx[stay_top]] = top
@@ -156,6 +164,7 @@ def sort_portfolios(
     exclude_sic: Optional[List[Tuple[int, int]]] = None,
     return_holdings: bool = False,
     buffer: int = 0,
+    hold_months: int = 1,
 ) -> Dict[str, pd.DataFrame]:
     """Build portfolios sorted on `signal`.
 
@@ -176,7 +185,8 @@ def sort_portfolios(
                   month (PERMNO, month, port, MthRet, mcap_lag), used for turnover
     """
     df = prepare_panel(panel, signal)
-    snap = _formation_snapshot(df, signal, rebalance)
+    hold_months = int(hold_months or 1) if rebalance == "monthly" else 1
+    snap = _formation_snapshot(df, signal, rebalance, hold_months)
     snap = _apply_filters(snap, breakpoint_exchanges, min_price, min_nyse_size_pct, exclude_sic)
 
     # Breakpoints from NYSE stocks only
@@ -191,7 +201,7 @@ def sort_portfolios(
     values = snap["sort_value"].to_numpy()[:, None]
     snap["port"] = (values > bp_matrix).sum(axis=1) + 1
     if buffer:
-        snap["port"] = _apply_buffer(snap, n_portfolios, buffer)
+        snap["port"] = _apply_buffer(snap, n_portfolios, buffer, step=hold_months)
 
     # Holding months: attach each stock-month to its portfolio
     hold = df.merge(snap[["PERMNO", "form_key", "port"]], on=["PERMNO", "form_key"], how="inner")
