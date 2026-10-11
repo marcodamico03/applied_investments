@@ -30,7 +30,7 @@ LONG, SHORT = 10, 1
 def cash_op(panel: pd.DataFrame) -> pd.Series:
     a = yearly(panel, COMPUSTAT_COLS)
     op = a["sale"] - a["cogs"] - a["xsga"].fillna(0) + a["xrd"].fillna(0)
-    d = lambda c: a[c].fillna(0) - a[f"{c}_lag"].fillna(0)  # noqa: E731  missing item = 0
+    d = lambda c: (a[c] - a[f"{c}_lag"]).fillna(0)  # noqa: E731  missing item or lag = no change
     cop = op - d("rect") - d("invt") + d("ap")
     s = (cop / a["at"].where(a["at"] > 0)).replace([np.inf, -np.inf], np.nan).dropna()
     return to_rows(panel, restrict(s, universe_june(panel)))
