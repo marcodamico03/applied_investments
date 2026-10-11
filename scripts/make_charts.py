@@ -1,9 +1,9 @@
 """
 Charts of the strategy against the US market, like the regime-monitor page.
 
-Run from the project folder, after run_signal.py --signal quality_value_industry
-(default config):
-    python scripts/make_charts.py
+Run from the project folder, after run_signal.py for the signal you want:
+    python scripts/make_charts.py                          # the final strategy, qvi_intan_full
+    python scripts/make_charts.py --signal quality_value_industry
 
 Writes to results/charts/:
     performance.html     interactive page: growth of $100 (log scale) with hover, period
@@ -48,10 +48,10 @@ def read(signal, kind):
     return x[x.index <= END]
 
 
-def build() -> pd.DataFrame:
-    m = importlib.import_module("src.signals.quality_value_industry")
+def build(signal: str) -> pd.DataFrame:
+    m = importlib.import_module(f"src.signals.{signal}")
     L, S = str(m.LONG), str(m.SHORT)
-    r, c = read("quality_value_industry", "returns"), read("quality_value_industry", "costs")
+    r, c = read(signal, "returns"), read(signal, "costs")
     f = load_factors(BASE_DIR / "data" / "external" / "factors_monthly.csv").reindex(r.index)
     net = r[f"{L}-{S} net"]
     out = pd.DataFrame({
@@ -157,7 +157,7 @@ th{color:var(--ink2);font-weight:600}.scroll{max-height:360px;overflow:auto}
 .note{color:var(--muted);font-size:12px;margin-top:8px}
 </style></head><body><main>
 <h1>Cheap and cash-profitable, against the market</h1>
-<p class="sub">quality_value_industry, value-weighted, after trading costs. Monthly, __START__ to __END__. Holdout 2016-2025 not shown.</p>
+<p class="sub">__SIGNAL__, value-weighted, after trading costs. Monthly, __START__ to __END__. Holdout 2016-2025 not shown.</p>
 <div class="card">
  <div class="ctrl" id="periods"></div>
  <div class="ctrl"><span style="color:var(--ink2)">From</span><select id="from"></select><span style="color:var(--ink2)">to</span><select id="to"></select></div>
@@ -233,13 +233,17 @@ def html(df: pd.DataFrame, out: Path) -> None:
     light = ";".join(f"--s{i}:{COLORS[s][0]}" for i, s in enumerate(series))
     dark = ";".join(f"--s{i}:{COLORS[s][1]}" for i, s in enumerate(series))
     page = (HTML.replace("__DATA__", json.dumps(data)).replace("__LIGHT__", light).replace("__DARK__", dark)
+            .replace("__SIGNAL__", df.attrs.get("signal", ""))
             .replace("__START__", str(df.index[0])).replace("__END__", str(df.index[-1])))
     (out / "performance.html").write_text(page, encoding="utf-8")
 
 
 def main() -> None:
-    argparse.ArgumentParser(description=__doc__).parse_args()
-    df = build()
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--signal", default="qvi_intan_full")
+    args = ap.parse_args()
+    df = build(args.signal)
+    df.attrs["signal"] = args.signal
     out = BASE_DIR / "results" / "charts"
     out.mkdir(parents=True, exist_ok=True)
     html(df, out)

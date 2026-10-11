@@ -4,9 +4,9 @@ market? (docs/STRATEGY.md, section 4)
 
 Run from the project folder, after run_signal.py for the signal, with the config whose
 results you want to analyse (results/signals/<signal>/ holds the LAST run):
-    python scripts/run_signal.py --signal quality_value_industry
-    python scripts/analyse_strategy.py
-    python scripts/analyse_strategy.py --config configs/strategies.yaml   (after the same run_signal)
+    python scripts/run_signal.py --signal qvi_intan_full --config configs/strategies.yaml
+    python scripts/analyse_strategy.py                     (final strategy, no microcaps)
+    python scripts/analyse_strategy.py --signal quality_value_industry --config configs/fast.yaml
 
 Uses the value-weighted spread AFTER costs (long decile 10, short decile 1), 1963-07 to
 2015-12; the holdout is never read.
@@ -39,7 +39,8 @@ from src.evaluation.alpha import load_factors, newey_west_ols  # noqa: E402
 
 END = pd.Period("2015-12", freq="M")
 N_BOOT, BLOCK, SEED = 10_000, 12, 7
-IDEAS_TESTED = 14   # candidate strategies evaluated before this one was chosen (Bonferroni)
+IDEAS_TESTED = 20   # candidate strategies evaluated before the final one was chosen (Bonferroni):
+                    # 14 by Roberto + 6 qvi_* extensions by Marco (scripts/run_fast.py)
 RECESSIONS = [("1969-12", "1970-11"), ("1973-11", "1975-03"), ("1980-01", "1980-07"),
               ("1981-07", "1982-11"), ("1990-07", "1991-03"), ("2001-03", "2001-11"),
               ("2007-12", "2009-06")]   # NBER peak to trough months
@@ -80,8 +81,8 @@ def recession_mask(index: pd.PeriodIndex) -> pd.Series:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--signal", default="quality_value_industry")
-    ap.add_argument("--config", default="configs/default.yaml")
+    ap.add_argument("--signal", default="qvi_intan_full")
+    ap.add_argument("--config", default="configs/strategies.yaml")
     args = ap.parse_args()
     cfg = yaml.safe_load((BASE_DIR / args.config).read_text())
     train, valid = cfg["periods"]["train"], cfg["periods"]["validation"]

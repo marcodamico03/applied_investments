@@ -3,9 +3,9 @@ Capacity: how much money can the strategy run before trading costs eat the alpha
 (docs/STRATEGY.md)
 
 Run from the project folder:
-    python scripts/run_capacity.py                                   (core strategy, default config)
-    python scripts/run_capacity.py --config configs/strategies.yaml  (no microcaps)
-    python scripts/run_capacity.py --signal value_industry
+    python scripts/run_capacity.py                                   (final strategy, no microcaps)
+    python scripts/run_capacity.py --config configs/default.yaml     (all stocks)
+    python scripts/run_capacity.py --signal quality_value_industry
 
 Same backtest as run_signal.py (same universe, sort, spread and price-impact model);
 only the fund size changes: $100m (the main runs), $500m, $1bn and $2.5bn per leg in
@@ -39,8 +39,8 @@ pd.set_option("display.float_format", lambda x: f"{x:.2f}")
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--signal", default="quality_value_industry")
-    ap.add_argument("--config", default="configs/default.yaml")
+    ap.add_argument("--signal", default="qvi_intan_full")
+    ap.add_argument("--config", default="configs/strategies.yaml")
     args = ap.parse_args()
     cfg = yaml.safe_load((BASE_DIR / args.config).read_text())
     train, valid = tuple(cfg["periods"]["train"]), rs.cut_at_holdout(tuple(cfg["periods"]["validation"]))

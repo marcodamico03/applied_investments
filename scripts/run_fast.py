@@ -3,7 +3,7 @@ Fast strategy search: backtest several signals in parallel with configs/fast.yam
 write one comparison table.
 
     python scripts/run_fast.py                          # the qvi_* ideas + the 2 baselines
-    python scripts/run_fast.py --signals qvi_best qvi_season
+    python scripts/run_fast.py --signals qvi_intensity
     python scripts/run_fast.py --workers 3              # signals run at the same time
     python scripts/run_fast.py --summary-only           # only rebuild the table
 
@@ -39,7 +39,7 @@ sys.path.insert(0, str(BASE_DIR))
 from src.evaluation.alpha import load_factors, regress  # noqa: E402
 
 CONFIG = "configs/fast.yaml"
-IDEAS = ["qvi_intan_full", "qvi_q5neutral", "qvi_intensity", "qvi_ff49", "qvi_best", "qvi_season"]
+IDEAS = ["qvi_intan_full", "qvi_intensity"]  # the weaker qvi_* ideas were removed
 BASELINES = ["quality_value_industry", "intangible_profit"]
 OUT = BASE_DIR / "results" / "fast"
 MAIN_PERIODS = {"1963-2015": ("1963-07", "2015-12"), "1963-1994": ("1963-07", "1994-12"),

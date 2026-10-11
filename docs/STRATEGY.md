@@ -1,38 +1,47 @@
-# Cheap and cash-profitable, within each industry
+# Cheap and cash-profitable, within each industry, with intangibles counted
 
-Branch `roberto`. Signal file: `src/signals/quality_value_industry.py`.
-Everything below is reproduced by `python scripts/run_roberto.py` (section 7).
+Branch `roberto` (Roberto and Marco). Final signal: `src/signals/qvi_intan_full.py`
+(built by `src/signals/_qvi_plus.py`). Every number below comes from
+`python scripts/run_roberto.py` (section 8).
 
 ## 1. The idea in one sentence
 
 Buy the US stocks that are cheap **for their industry** and generate real **cash** from their
-operations; short the stocks that are expensive for their industry and do not.
+operations, once the accounts are corrected for the investment in intangibles (R&D, brands,
+organisation) that accounting treats as a cost; short the opposite.
 
 ## 2. The rules
 
 Once a year, at the end of June of year t, using the accounts of the fiscal year that ended
 in calendar year t-1 (public by then) and the market value of December t-1:
 
-1. **Universe:** US common stocks (NYSE, AMEX, NASDAQ) with a positive market value in June.
+1. **Universe (team standard, `configs/strategies.yaml`):** US common stocks (NYSE, AMEX,
+   NASDAQ) above the NYSE 20th size percentile, so no microcaps.
 2. **Industry:** each stock gets one of the 12 Fama-French industries from its SIC code.
-3. **Cheapness score.** Inside each industry, rank every firm on four ratios and average the
+3. **Intangible capital** (`src/signals/_intangibles.py`, Peters and Taylor 2017), rebuilt
+   year by year with the perpetual inventory method:
+   - knowledge capital: K(t) = 0.85 K(t-1) + R&D(t)
+   - organisation capital: O(t) = 0.80 O(t-1) + 0.30 x (SG&A without R&D)(t)
+4. **Cheapness score.** Inside each industry, rank every firm on four ratios and average the
    ranks (at least three needed):
-   - book value / market value
+   - book value / market value, with book = book equity - goodwill + K + O
+     (Eisfeldt, Kim and Papanikolaou 2022)
    - earnings / market value
    - cash flow (earnings + depreciation) / market value
    - EBITDA / enterprise value
 
-   Banks, insurers and other financials (SIC 6000-6999) use only the first two, because
-   for them debt is raw material and EBITDA has no meaning.
-4. **Quality score.** Inside each industry, rank every firm on cash-based operating
-   profitability (Ball, Gerakos, Linnainmaa and Nikolaev 2016): sales - cost of goods -
-   SG&A + R&D, minus the increase in receivables and inventory, plus the increase in
-   payables, divided by total assets.
-5. **Final score:** the average of the two ranks, again ranked inside the industry.
+   Banks, insurers and other financials (SIC 6000-6999) use only the first two: for them
+   debt is raw material and EBITDA has no meaning.
+5. **Quality score.** Inside each industry, rank every firm on cash-based operating
+   profitability (Ball, Gerakos, Linnainmaa and Nikolaev 2016), corrected for intangibles:
+   (sales - cost of goods - SG&A + R&D + 0.30 x SG&A without R&D - increase in receivables
+   - increase in inventory + increase in payables) / (total assets + K + O).
+   A missing item counts as no change.
+6. **Final score:** the average of the two ranks, ranked again inside the industry.
    Industries need at least 10 stocks that year.
-6. **Portfolio:** deciles with NYSE breakpoints. Long decile 10 (cheap and profitable),
+7. **Portfolio:** deciles with NYSE breakpoints. Long decile 10 (cheap and profitable),
    short decile 1 (expensive and unprofitable), each stock weighted by its market value.
-7. **Hold for 12 months**, then repeat.
+8. **Hold for 12 months**, then repeat.
 
 Trading costs follow the team's model (`src/portfolio/costs.py`): half the bid-ask spread
 plus price impact, for a fund of $100m per side in 2025 dollars.
@@ -40,133 +49,102 @@ plus price impact, for a fund of $100m per side in 2025 dollars.
 ## 3. Why it should work
 
 - **Industry-relative cheapness removes a bet that does not pay.** A bank always looks
-  cheap next to a software firm. A plain value portfolio is therefore mostly long banks and
-  utilities and short technology: an industry bet that adds risk but little return. Inside
-  an industry, cheapness is real information (Asness, Porter and Stevens 2000; Cohen and
-  Polk 1998).
+  cheap next to a software firm, so a plain value portfolio is mostly an industry bet.
+  Inside an industry, cheapness is real information (Asness, Porter and Stevens 2000).
 - **Cash, not accounting profit.** Profit that never arrives as cash is often an accounting
   choice, and investors overpay for it (Sloan 1996; Ball et al. 2016).
 - **Each half protects the other.** Cheap stocks alone are often cheap for a reason (value
   traps); profitable stocks alone are often expensive. Requiring both keeps the cheap firms
   that are healthy (Novy-Marx 2013; Asness, Frazzini and Pedersen 2019).
-- **Likely reason the premium exists:** investors pay too much for exciting stories and too
-  little for boring, cheap, cash-rich firms. Prices correct slowly, and fastest when stories
-  collapse, which is why the strategy earns most in crises.
+- **Intangibles fix the accounts where they are most wrong.** R&D and brand building are
+  investments, but accounting expenses them. Without the correction, a pharma or software
+  firm looks both expensive (book value too low) and unprofitable (profit too low), so the
+  strategy would short good firms by mistake. The correction matters most after 1995, when
+  intangible-heavy firms became a large part of the market, and that is where the gain is
+  (section 4).
 
-## 4. Results, 1963-07 to 2015-12, value-weighted, after trading costs
+## 4. Results, 1963-07 to 2015-12, value-weighted, no microcaps, after trading costs
 
-Training 1963-2005, validation 2006-2015. The holdout 2016-2025 is reported in section 6.
+Net long-short spread (decile 10 minus decile 1), % per month, t-stats in brackets
+(alphas: Newey-West, 6 lags).
 
-### The long-short spread
-
-| | Per month | t-stat |
+| | Final: intangibles in value and quality | First version (no intangibles) |
 |---|---|---|
-| Gross return | 0.63% | 4.84 |
-| Trading costs | 0.12% | |
-| **Net return** | **0.51%** | **3.90** |
-| Net, training | 0.49% | 3.35 |
-| Net, validation | 0.59% | 2.03 |
+| Net return 1963-2015 | **0.46 (3.64)** | 0.38 (2.95) |
+| Net return 1963-1994 | 0.50 (3.20) | 0.46 (2.90) |
+| Net return 1995-2015 | 0.41 (1.90) | 0.24 (1.16) |
+| Net Sharpe (annual) | 0.50 | 0.41 |
+| CAPM net alpha | 0.55 (4.17) | 0.46 (3.49) |
+| Fama-French 5 net alpha | **0.50 (3.78)** | 0.37 (2.83) |
+| Fama-French 6 net alpha | **0.45 (3.13)** | 0.35 (2.31) |
+| q5 net alpha | 0.24 (1.60) | 0.15 (0.97) |
+| With every stock (microcaps in), net | 0.56 | 0.47 |
 
-Net Sharpe 0.54. Turnover about 5% per month per side; the strategy breaks even at a cost of
-about 300 bps per trade.
+Reading: after costs the final strategy has a net return and FF5/FF6 alphas with t above 3,
+the Harvey, Liu and Zhu (2016) bar. The improvement over the first version is on every
+line and is largest after 1995, as the intangibles story predicts. On its own the
+improvement is not yet statistically proven: final minus first version is +0.08% per month
+(t 1.27) over 1963-2015 and +0.16% (t 1.17) over 1995-2015.
 
-### Alphas of the net spread (Newey-West t, 6 lags)
+### Which piece does the work (same table, `results/roberto/summary.txt`)
 
-| Model | Net alpha per month | t |
-|---|---|---|
-| CAPM | 0.62% | 4.67 |
-| Fama-French 5 | 0.43% | 3.33 |
-| Fama-French 6 (with momentum) | 0.39% | 2.79 |
-| q5 | 0.19% | 1.42 |
-
-Before costs the q5 alpha is 0.29% (t 2.21).
-
-### As a portfolio
-
-| | Long-short fund (T-bills + spread) | Long only (decile 10) | US market |
+| Version | Net % (t) | FF5 net alpha % (t) | q5 net alpha % (t) |
 |---|---|---|---|
-| Return per year | 10.7% | 12.5% | 10.1% |
-| Volatility per year | 11.4% | 15.8% | 15.3% |
-| Sharpe | 0.5 | 0.5 | 0.4 |
-| Max drawdown | -30% | -45% | -50% |
-| Worst year | -16% (1999) | -25% | -37% (2008) |
+| Final (intangibles in value and quality) | 0.46 (3.64) | 0.50 (3.78) | 0.24 (1.60) |
+| Intangibles in book value only | 0.45 (3.57) | 0.42 (3.32) | 0.16 (1.15) |
+| First version | 0.38 (2.95) | 0.37 (2.83) | 0.15 (0.97) |
+| First version, 49 industries | 0.35 (2.72) | 0.33 (2.46) | 0.06 (0.42) |
+| Quality + value without industries | 0.57 (3.66) | 0.32 (2.40) | 0.06 (0.35) |
+| Value half alone (within industries) | 0.38 (2.98) | 0.18 (1.70) | 0.12 (0.73) |
+| Quality half alone (cash profitability) | 0.26 (1.80) | 0.52 (4.16) | 0.16 (0.99) |
 
-The US market is the CRSP value-weighted index (SPY exists only from 1993).
-Correlation of the long-short fund with the market: -0.30.
+- The version without industries earns the most, but almost all of it is the known value
+  and profitability factors: its FF5 alpha is lower and its q5 alpha is close to zero.
+  Measuring within industries is what turns a factor bet into alpha.
+- The intangible book value raises the return; the intangible profitability raises the
+  alphas. 49 industries instead of 12 do not help.
 
-It pays in crises: 1973 +25% and 1974 +29% (market -19% and -28%), 2001 +32% (market -11%),
-2008 +63% (market -37%). It lags in speculative rallies: 1999 -16% (market +25%).
-The market plus the long-short spread (an overlay, 1:1) has a Sharpe of 0.75 against 0.39,
-a worst year of -24% against -37%.
+### Luck, years, market, capacity
 
-### Is it luck? Does it come from one year?
-
-- Block bootstrap (10,000 resamples, 12-month blocks): no resample with a mean of zero or
-  less; 95% interval of the monthly net return 0.24% to 0.77%.
-- t-stat 3.90, above the Harvey, Liu and Zhu (2016) bar of 3.
-- Without 2008: t 3.38. Without the three best years: t 2.75. Dropping any single year,
-  the lowest t is 3.38.
-- Rolling 10-year windows: positive in 79% of them. The weak decade is the 1990s (about 1%
-  per year), when expensive, unprofitable technology stocks kept rising.
-
-### What it is exposed to
-
-FF6 loadings of the net spread: market -0.10, size -0.14, profitability (RMW) +0.19,
-investment (CMA) +0.26. It earns +1.5% per month in months when the market falls and -0.2%
-when it rises; +1.3% per month in NBER recessions.
-
-### Robustness
-
-| Check | Result |
-|---|---|
-| Plain (not industry-relative) quality + value | FF5 alpha before costs 0.51% (t 3.68), q5 0.25% (t 1.51): the industry-relative version is stronger (0.55%, t 4.30; q5 0.29%, t 2.21) |
-| 49 industries instead of 12 | net FF5 alpha 0.42% (t 3.19) |
-| Intangible-adjusted book value (Eisfeldt, Kim and Papanikolaou 2022) | net 0.53% (t 4.03), net FF5 alpha 0.48% (t 3.68) |
-| No microcaps (configs/strategies.yaml) | net 0.38% (t 2.91), net FF6 alpha 0.34% (t 2.29) |
-| Capacity | net FF5 alpha with t > 2 up to $500m per side on training ($1bn over 1963-2015) |
+`run_roberto.py` also runs, for the final strategy: `analyse_strategy.py` (bootstrap,
+Bonferroni for the 20 ideas tested, results without the best years, behaviour in crises,
+market + strategy), `run_capacity.py` ($100m to $2.5bn per side), `yearly_performance.py`
+and `make_charts.py`. Their full output is in `results/roberto/logs/`; the summary of those
+numbers will be added here.
 
 ## 5. Limits
 
-- After costs, the q5 model explains most of the alpha.
-- Weak in the 1990s and, without microcaps, weak in 1995-2015 (net 0.23% per month, t 1.07).
-- The return leans on crisis years; 2008 alone is about a sixth of the total.
+- The q5 model explains a good part of the alpha after costs (q5 net alpha t 1.60).
+- The gain from the intangible correction over the first version is consistent with the
+  story but not statistically significant on its own.
+- 1995-2015 alone is weaker (net t 1.90).
 - It needs short selling (borrow costs and availability are not in the cost model) and
-  holds about 140 to 360 stocks per side, so it is a strategy for a fund, not a small
-  account.
+  holds a few hundred stocks per side: a strategy for a fund, not a small account.
 
 ## 6. Holdout 2016-2025
 
-To be added after the single holdout run
-(`python scripts/run_signal.py --signal quality_value_industry --holdout`, logged in
-`holdout_log.txt`).
+To be run once by the team on the final rules
+(`python scripts/run_signal.py --signal qvi_intan_full --config configs/strategies.yaml --holdout`).
 
-## 7. How to reproduce
+## 7. Files on this branch
+
+| File | What it does |
+|---|---|
+| `src/signals/qvi_intan_full.py`, `_qvi_plus.py` | **the final strategy** (Marco) |
+| `src/signals/quality_value_industry.py` | the first version |
+| `src/signals/value_industry.py`, `cash_op.py` | its two halves (also tested alone) |
+| `src/signals/quality_value.py`, `value_composite.py` | the same ideas without industries |
+| `src/signals/quality_value_industry_ff49.py`, `quality_value_industry_intan.py`, `qvi_intensity.py` | variants |
+| `src/signals/_industry.py`, `_quality.py`, `_intangibles.py` | helpers (industries, ranks, universe, intangible capital) |
+| `scripts/run_roberto.py` | runs everything for this document |
+| `scripts/run_fast.py`, `configs/fast.yaml` | quick comparison of several signals (Marco) |
+| `scripts/analyse_strategy.py`, `run_capacity.py`, `yearly_performance.py`, `make_charts.py` | analysis of the final strategy |
+
+## 8. How to reproduce
 
 ```
 git pull origin roberto
 python src/data/clean.py              # once, needs the WRDS files in data/raw/
-python scripts/run_roberto.py         # every result above, about 15-30 minutes
-open results/charts/performance.html  # the interactive chart against the market
+python scripts/run_roberto.py         # every number above (2 backtests at a time; --workers 3 is faster)
+open results/charts/performance.html  # interactive chart against the market
 ```
-
-`run_roberto.py` runs each config as one block, saves every script's output in
-`results/roberto/logs/` and a summary table in `results/roberto/summary_<block>.txt`.
-The 49-industry check downloads Ken French's Siccodes49 file once into
-`data/external/raw/`.
-
-## 8. Files on this branch
-
-| File | What it does |
-|---|---|
-| `src/signals/quality_value_industry.py` | **the strategy** |
-| `src/signals/value_industry.py`, `cash_op.py` | its two halves (also tested alone) |
-| `src/signals/value_composite.py`, `quality_value.py` | the same ideas without industries, for comparison |
-| `src/signals/quality_value_industry_ff49.py`, `quality_value_industry_intan.py` | robustness |
-| `src/signals/_industry.py`, `_quality.py` | helpers (industries, ranks, universe) |
-| `scripts/run_roberto.py` | runs everything |
-| `scripts/analyse_strategy.py` | luck, one-year dependence, factors, market + strategy |
-| `scripts/run_capacity.py` | costs and alphas at $100m to $2.5bn |
-| `scripts/yearly_performance.py`, `scripts/make_charts.py` | year-by-year table and charts against the market |
-
-The data engine, the cost model, the factor file and the intangible-capital helper
-(`src/signals/_intangibles.py`) are the team's, unchanged.
