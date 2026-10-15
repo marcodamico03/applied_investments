@@ -38,9 +38,19 @@ sys.path.insert(0, str(BASE_DIR))
 
 from src.evaluation.alpha import load_factors, regress  # noqa: E402
 
-CONFIG = "configs/fast.yaml"
-IDEAS = ["qvi_intan_full", "qvi_intensity"]  # the weaker qvi_* ideas were removed
-BASELINES = ["quality_value_industry", "intangible_profit"]
+CONFIG = "configs/fast.yaml"                  # annual signals
+CONFIG_MONTHLY = "configs/fast_quarterly.yaml"  # monthly signals: held 3 months + variants
+# October 15 batch: timely value (current price, held 3 months) + the two additions that
+# worked on the annual strategy (payout yield, innovation ability); baselines: the final
+# annual strategy and its two best annual variants
+IDEAS = ["qvi_timely", "qvi_timely_payout", "qvi_timely_innov", "qvi_timely_best"]
+BASELINES = ["qvi_intan_full", "qvi_payout", "qvi_innov"]
+
+
+def config_for(signal: str) -> str:
+    """configs/fast_monthly.yaml for monthly signals, configs/fast.yaml otherwise."""
+    from src.signals import load_signal
+    return CONFIG_MONTHLY if load_signal(signal).REBALANCE == "monthly" else CONFIG
 OUT = BASE_DIR / "results" / "fast"
 MAIN_PERIODS = {"1963-2015": ("1963-07", "2015-12"), "1963-1994": ("1963-07", "1994-12"),
                 "1995-2015": ("1995-01", "2015-12"), "2005-2015": ("2005-01", "2015-12")}
@@ -54,7 +64,8 @@ def run_one(signal: str) -> tuple:
     log = OUT / "logs" / f"{signal}.txt"
     with log.open("w") as fh:
         res = subprocess.run([sys.executable, "scripts/run_signal.py", "--signal", signal,
-                              "--config", CONFIG], cwd=BASE_DIR, stdout=fh, stderr=subprocess.STDOUT)
+                              "--config", config_for(signal)], cwd=BASE_DIR, stdout=fh,
+                             stderr=subprocess.STDOUT)
     if res.returncode == 0:
         src = BASE_DIR / "results" / "signals" / signal
         dst = OUT / signal
@@ -146,7 +157,8 @@ def main() -> None:
     (OUT / "logs").mkdir(parents=True, exist_ok=True)
 
     if not args.summary_only:
-        print(f"Backtesting {len(args.signals)} signals with {CONFIG}, {args.workers} at a time "
+        print(f"Backtesting {len(args.signals)} signals ({CONFIG} for annual, {CONFIG_MONTHLY} for "
+              f"monthly ones), {args.workers} at a time "
               f"(logs in results/fast/logs/)...")
         failed = []
         with ThreadPoolExecutor(max_workers=args.workers) as pool:
