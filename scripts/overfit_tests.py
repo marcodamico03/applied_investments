@@ -1,32 +1,23 @@
 """
 Is the final strategy a real signal or the result of overfitting (we tried many ideas
-and kept the best)? Four tests, 1963-07 to 2015-12 (the holdout is never read).
+and kept the best)? Three tests, 1963-07 to 2015-12 (the holdout is never read).
 
 Run from the project folder, after the backtest of the signal with its config
-(results/signals/<signal>/) and after scripts/run_fast.py (results/fast/<idea>/ holds
-every idea we tried, the "trials"):
+(results/signals/<signal>/):
     python scripts/overfit_tests.py                         (qvi_timely, fast_quarterly)
-    python scripts/overfit_tests.py --quick                 (only B and E: a few seconds)
+    python scripts/overfit_tests.py --quick                 (only C, no backtests: a few seconds)
     python scripts/overfit_tests.py --n-placebo 50 --n-splits 5
 
-B. PBO                Probability of Backtest Overfitting (Bailey, Borwein, Lopez de
-                      Prado and Zhu 2017, CSCV): the 1963-2015 months are cut into 16
-                      blocks; for each of the 12,870 ways to choose 8 of them as
-                      "in-sample", the best trial in-sample is checked on the other 8.
-                      PBO = share of cases where the in-sample winner is below the
-                      median trial out-of-sample. Below 0.5 = selection works; near 0
-                      = the winner keeps winning. Criteria: net Sharpe and net q5
-                      appraisal ratio (alpha / residual volatility).
-C. PLACEBO            the score is shuffled across stocks within each month (same
+A. PLACEBO            the score is shuffled across stocks within each month (same
                       universe, same portfolios, same timing, same costs code), N times.
                       If the pipeline itself made alpha (look-ahead, size or industry
                       tilt, a bug), the placebos would have it too. p-value = share of
                       placebos with a gross q5 / FF6 alpha at least as high as the real one.
-D. HALF UNIVERSES     the stocks are split at random into two halves (by PERMNO); the
+B. HALF UNIVERSES     the stocks are split at random into two halves (by PERMNO); the
                       same strategy is run on each half separately, net of costs. A real
                       signal works in both halves; an overfit one (driven by a few
                       stocks) does not.
-E. NEIGHBOURS         the strategy with the parameters around the chosen ones (hold 1 /
+C. NEIGHBOURS         the strategy with the parameters around the chosen ones (hold 1 /
                       6 months, buffer, large caps, all stocks) from robustness.csv:
                       a real signal does not depend on one precise parameter.
 The last, decisive test is the holdout 2016-2025: run ONCE, after freezing the rules
@@ -34,7 +25,6 @@ The last, decisive test is the holdout 2016-2025: run ONCE, after freezing the r
 Output: results/overfit/<signal>/ (csv tables and summary.txt).
 """
 import argparse
-import itertools
 import sys
 import time
 from pathlib import Path
@@ -47,12 +37,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 sys.path.insert(0, str(BASE_DIR / "scripts"))
 
-from src.evaluation.alpha import MODELS, load_factors, regress  # noqa: E402
+from src.evaluation.alpha import load_factors, regress  # noqa: E402
 
 START, END = "1963-07", "2015-12"
-N_BLOCKS = 16
 SEED = 11
-TRIALS_DIR = BASE_DIR / "results" / "fast"
 
 pd.set_option("display.width", 220)
 pd.set_option("display.float_format", lambda x: f"{x:.3f}")
@@ -82,68 +70,7 @@ def tstat(x) -> float:
     return x.mean() / x.std() * np.sqrt(len(x))
 
 
-# ------------------------------------------------------------------ trials
-def load_trials(signal: str, final_net: pd.Series) -> pd.DataFrame:
-    """Monthly VW net spread of every idea in results/fast/ (plus the final one)."""
-    cols = {}
-    for f in sorted(TRIALS_DIR.glob("*/returns_vw.csv")):
-        r = read_returns(f)
-        cols[f.parent.name] = r[net_col(r)]
-    cols[signal] = final_net   # the final run (its own config) replaces the fast copy
-    return pd.DataFrame(cols)
-
-
-# ------------------------------------------------------------------ B. PBO (CSCV)
-def _sub_alpha_ir(Y, X):
-    """Appraisal ratio (alpha / residual std) of every column of Y on X (with const)."""
-    beta, *_ = np.linalg.lstsq(X, Y, rcond=None)
-    resid = Y - X @ beta
-    return beta[0] / resid.std(axis=0, ddof=X.shape[1])
-
-
-def pbo(trials, factors, lines):
-    say(f"\n===== B. Probability of Backtest Overfitting (CSCV, {N_BLOCKS} blocks) =====", lines)
-    m = trials.dropna(axis=1, thresh=int(0.9 * len(trials))).dropna()
-    cols = list(trials.columns)
-    if m.shape[1] < 3:
-        say("Fewer than 3 trials with full history: PBO skipped.", lines)
-        return None
-    fac = factors.reindex(m.index)[MODELS["q5"]["factors"]]
-    ok = fac.notna().all(axis=1)
-    m, fac = m[ok], fac[ok]
-    Y = m.to_numpy()
-    X = np.column_stack([np.ones(len(m)), fac.to_numpy()])
-    blocks = np.array_split(np.arange(len(m)), N_BLOCKS)
-    results = {}
-    for crit in ["net Sharpe", "net q5 appraisal ratio"]:
-        def score(idx):
-            if crit == "net Sharpe":
-                y = Y[idx]
-                return y.mean(axis=0) / y.std(axis=0, ddof=1)
-            return _sub_alpha_ir(Y[idx], X[idx])
-        logits, oos_best, oos_rank, below0 = [], [], [], []
-        for combo in itertools.combinations(range(N_BLOCKS), N_BLOCKS // 2):
-            ins = np.concatenate([blocks[b] for b in combo])
-            oos = np.concatenate([blocks[b] for b in range(N_BLOCKS) if b not in combo])
-            s_in, s_out = score(ins), score(oos)
-            best = int(np.argmax(s_in))
-            w = (np.argsort(np.argsort(s_out))[best] + 1) / (len(s_out) + 1)   # relative OOS rank
-            logits.append(np.log(w / (1 - w)))
-            oos_rank.append(w)
-            oos_best.append(s_out[best])
-            below0.append(s_out[best] <= 0)
-        logits = np.array(logits)
-        results[crit] = {"PBO (in-sample winner below OOS median)": (logits <= 0).mean(),
-                         "average OOS percentile of the in-sample winner": np.mean(oos_rank),
-                         "share where the winner loses money OOS": np.mean(below0),
-                         "trials used": Y.shape[1], "months": len(m)}
-    r = pd.DataFrame(results)
-    say(f"Trials with a full history: {list(m.columns)}", lines)
-    say(r.to_string(), lines)
-    return r
-
-
-# ------------------------------------------------------------------ C/D. backtests
+# ------------------------------------------------------------------ A/B. backtests
 def shuffle_within_month(panel, col, rng):
     s = panel[col]
     ok = s.notna().to_numpy()
@@ -189,7 +116,7 @@ def backtests(signal, cfg, n_placebo, n_splits, lines):
     rng = np.random.default_rng(SEED)
     placebo_tab = None
     if n_placebo:
-        say(f"\n===== C. Placebo: score shuffled within each month, {n_placebo} times "
+        say(f"\n===== A. Placebo: score shuffled within each month, {n_placebo} times "
             f"(spread costs only, to be faster) =====", lines)
         t0 = time.time()
         real = run(signal, False)
@@ -212,7 +139,7 @@ def backtests(signal, cfg, n_placebo, n_splits, lines):
 
     split_tab = None
     if n_splits:
-        say(f"\n===== D. Random half universes ({n_splits} splits x 2 halves, net of costs) =====", lines)
+        say(f"\n===== B. Random half universes ({n_splits} splits x 2 halves, net of costs) =====", lines)
         permnos = panel["PERMNO"].unique()
         rows = []
         t0 = time.time()
@@ -233,9 +160,9 @@ def backtests(signal, cfg, n_placebo, n_splits, lines):
     return placebo_tab, split_tab
 
 
-# ------------------------------------------------------------------ E. neighbours
+# ------------------------------------------------------------------ C. neighbours
 def neighbours(signal, lines):
-    say("\n===== E. Neighbouring parameters (robustness.csv of the last run) =====", lines)
+    say("\n===== C. Neighbouring parameters (robustness.csv of the last run) =====", lines)
     f = BASE_DIR / "results" / "signals" / signal / "robustness.csv"
     if not f.exists():
         say("No robustness.csv: run the backtest first.", lines)
@@ -255,11 +182,10 @@ def main() -> None:
     ap.add_argument("--config", default="configs/fast_quarterly.yaml")
     ap.add_argument("--n-placebo", type=int, default=20)
     ap.add_argument("--n-splits", type=int, default=3)
-    ap.add_argument("--quick", action="store_true", help="no backtests: only B and E")
+    ap.add_argument("--quick", action="store_true", help="no backtests: only C")
     args = ap.parse_args()
 
     cfg = yaml.safe_load((BASE_DIR / args.config).read_text())
-    factors = load_factors(BASE_DIR / cfg["data"]["factors"])
     out_dir = BASE_DIR / "results" / "overfit" / args.signal
     out_dir.mkdir(parents=True, exist_ok=True)
     lines = []
@@ -267,23 +193,17 @@ def main() -> None:
     if not final_file.exists():
         sys.exit(f"{final_file} not found: run the backtest first "
                  f"(python scripts/run_signal.py --signal {args.signal} --config {args.config})")
-    r = read_returns(final_file)
-    final_net = r[net_col(r)]
     say(f"Overfitting tests for {args.signal} ({args.config}), VW, {START} to {END}", lines)
 
-    trials = load_trials(args.signal, final_net)
-    p = pbo(trials, factors, lines)
-    if p is not None:
-        p.to_csv(out_dir / "B_pbo.csv")
     if not args.quick:
         pl, sp = backtests(args.signal, cfg, args.n_placebo, args.n_splits, lines)
         if pl is not None:
-            pl.to_csv(out_dir / "C_placebo.csv")
+            pl.to_csv(out_dir / "A_placebo.csv")
         if sp is not None:
-            sp.to_csv(out_dir / "D_half_universes.csv")
+            sp.to_csv(out_dir / "B_half_universes.csv")
     nb = neighbours(args.signal, lines)
     if nb is not None:
-        nb.to_csv(out_dir / "E_neighbours.csv")
+        nb.to_csv(out_dir / "C_neighbours.csv")
     say("\nLast test: the holdout 2016-2025, ONCE, after freezing the rules (see the docstring).", lines)
     (out_dir / "summary.txt").write_text("\n".join(lines) + "\n")
     print(f"\nSaved in {out_dir}")

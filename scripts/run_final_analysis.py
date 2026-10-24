@@ -17,8 +17,7 @@ Steps (each output also saved in results/final/logs/<step>.txt):
   costs       run_capacity.py --scenarios: spread only, sqrt impact, $10m, 5 days to trade
   yearly      yearly_performance.py: every year, long-short vs long-only vs market
   charts      make_charts.py: results/charts/performance.html
-  overfit     overfit_tests.py: PBO, placebo, random half universes, neighbouring
-              parameters
+  overfit     overfit_tests.py: placebo, random half universes, neighbouring parameters
 The holdout (2016-2025) is never run here.
 """
 import argparse
