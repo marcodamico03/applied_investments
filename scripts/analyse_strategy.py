@@ -7,13 +7,13 @@ results you want to analyse (results/signals/<signal>/ holds the LAST run):
     python scripts/run_signal.py --signal qvi_intan_full --config configs/strategies.yaml
     python scripts/analyse_strategy.py                     (final strategy, no microcaps)
     python scripts/analyse_strategy.py --signal quality_value_industry --config configs/fast.yaml
+    python scripts/analyse_strategy.py --signal qvi_timely --config configs/fast_quarterly.yaml
 
 Uses the value-weighted spread AFTER costs (long decile 10, short decile 1), 1963-07 to
 2015-12; the holdout is never read.
 
 A. LUCK     t-stat against the Harvey, Liu and Zhu (2016) bar of 3; block bootstrap
             (12-month blocks, 10,000 resamples) of the mean and the Sharpe ratio;
-            Bonferroni adjustment for the number of ideas we tested.
 B. ONE YEAR? every calendar year; the result without the best 1, 3 and 5 years, without
             2008, without recessions; leave-one-year-out; rolling 10-year windows; decades.
 C. MARKET   correlations with the market and every factor; FF6 loadings; behaviour in up
@@ -39,8 +39,6 @@ from src.evaluation.alpha import load_factors, newey_west_ols  # noqa: E402
 
 END = pd.Period("2015-12", freq="M")
 N_BOOT, BLOCK, SEED = 10_000, 12, 7
-IDEAS_TESTED = 20   # candidate strategies evaluated before the final one was chosen (Bonferroni):
-                    # 14 by Roberto + 6 qvi_* extensions by Marco (scripts/run_fast.py)
 RECESSIONS = [("1969-12", "1970-11"), ("1973-11", "1975-03"), ("1980-01", "1980-07"),
               ("1981-07", "1982-11"), ("1990-07", "1991-03"), ("2001-03", "2001-11"),
               ("2007-12", "2009-06")]   # NBER peak to trough months
@@ -117,7 +115,6 @@ def main() -> None:
         "Bootstrap 95% CI of the Sharpe, low": np.percentile(bs, 2.5),
         "Bootstrap 95% CI of the Sharpe, high": np.percentile(bs, 97.5),
         "Bootstrap share of resamples with mean <= 0 %": (bm <= 0).mean() * 100,
-        f"p-value x {IDEAS_TESTED} ideas tested (Bonferroni)": min(1.0, p_one * IDEAS_TESTED),
     })
     print("===== A. Is it luck? =====")
     print(luck.to_string(float_format=lambda x: f"{x:.3f}"))

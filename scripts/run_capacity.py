@@ -6,6 +6,8 @@ Run from the project folder:
     python scripts/run_capacity.py                                   (final strategy, no microcaps)
     python scripts/run_capacity.py --config configs/default.yaml     (all stocks)
     python scripts/run_capacity.py --signal quality_value_industry
+    python scripts/run_capacity.py --signal qvi_timely --config configs/fast_quarterly.yaml --scenarios
+                                   (cost-model sensitivity: spread only, sqrt impact, $10m-$2.5bn)
 
 Same backtest as run_signal.py (same universe, sort, spread and price-impact model);
 only the fund size changes: $100m (the main runs), $500m, $1bn and $2.5bn per leg in
@@ -31,6 +33,17 @@ from src.evaluation.alpha import load_factors, regress  # noqa: E402
 from src.signals import build_panel, load_signal  # noqa: E402
 
 SIZES = [100, 500, 1000, 2500]   # $m per leg in 2025-12
+# --scenarios: cost-model sensitivity at the same time (each = one full backtest)
+SCENARIOS = {
+    "spread only":         {"price_impact": False},
+    "linear $10m":         {"price_impact": True, "aum_musd": 10},
+    "linear $100m (main)": {"price_impact": True, "aum_musd": 100},
+    "sqrt $100m":          {"price_impact": True, "aum_musd": 100, "impact_shape": "sqrt"},
+    "linear $500m":        {"price_impact": True, "aum_musd": 500},
+    "linear $1bn":         {"price_impact": True, "aum_musd": 1000},
+    "linear $2.5bn":       {"price_impact": True, "aum_musd": 2500},
+    "linear $100m, 5 days to trade": {"price_impact": True, "aum_musd": 100, "execution_days": 5},
+}
 MODELS = ["CAPM", "FF5", "FF6", "q5"]
 
 pd.set_option("display.width", 220)
@@ -41,6 +54,9 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--signal", default="qvi_intan_full")
     ap.add_argument("--config", default="configs/strategies.yaml")
+    ap.add_argument("--scenarios", action="store_true",
+                    help="cost-model sensitivity (spread only, sqrt impact, $10m..$2.5bn, 5 days) "
+                         "instead of the fund sizes only")
     args = ap.parse_args()
     cfg = yaml.safe_load((BASE_DIR / args.config).read_text())
     train, valid = tuple(cfg["periods"]["train"]), rs.cut_at_holdout(tuple(cfg["periods"]["validation"]))
@@ -55,8 +71,13 @@ def main() -> None:
     panel = build_panel(spec)
     spreads = load_spreads()
     rows = []
-    for size in SIZES:
-        costs_cfg = {**(cfg.get("costs") or {}), "aum_musd": size}
+    if args.scenarios:
+        runs = SCENARIOS
+    else:
+        runs = {size: {"aum_musd": size} for size in SIZES}
+    key = "cost scenario" if args.scenarios else "fund $m per leg"
+    for size, change in runs.items():
+        costs_cfg = {**(cfg.get("costs") or {}), **change}
         impact, label = rs.cost_settings(panel, spreads, costs_cfg)
         print(f"  {label}")
         base = rs.backtest(panel, args.signal, spec, opts, ["vw"], spreads, train[0], valid[1], impact)
@@ -64,7 +85,8 @@ def main() -> None:
         cost = base["costs_vw"][[spec.LONG, spec.SHORT]].sum(axis=1)
         for period, (s, e) in periods.items():
             net = r[f"{spread} net"].loc[s:e]
-            row = {"fund $m per leg": size, "period": period,
+            to = (base["turnover_vw"][spec.LONG] + base["turnover_vw"][spec.SHORT]).loc[s:e] / 2
+            row = {key: size, "period": period, "Turnover %": to.mean() * 100,
                    "Gross %": r[spread].loc[s:e].mean() * 100,
                    "Net %": net.mean() * 100, "Net t": net.mean() / net.std() * len(net) ** 0.5,
                    "Cost %": cost.loc[s:e].mean() * 100}
@@ -72,10 +94,12 @@ def main() -> None:
                 res = regress(net, factors, m, long_short=True, nw_lags=6)
                 row[f"{m} net alpha %"], row[f"{m} t"] = res["alpha %"], res["t(alpha)"]
             rows.append(row)
-    table = pd.DataFrame(rows).set_index(["period", "fund $m per leg"]).sort_index()
+    table = pd.DataFrame(rows).set_index(["period", key])
+    table = table.loc[[p for p in periods if p in table.index.get_level_values(0)]]
     out = BASE_DIR / "results" / "capacity"
     out.mkdir(parents=True, exist_ok=True)
-    table.to_csv(out / f"{args.signal}_{Path(args.config).stem}.csv")
+    suffix = "_scenarios" if args.scenarios else ""
+    table.to_csv(out / f"{args.signal}_{Path(args.config).stem}{suffix}.csv")
     print(f"\n===== Capacity of {args.signal}, value-weighted, config {args.config} =====")
     print("Net alphas are the regression of the NET spread (after costs) on each model.")
     print(table.to_string())

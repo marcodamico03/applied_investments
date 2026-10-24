@@ -43,8 +43,8 @@ CONFIG_MONTHLY = "configs/fast_quarterly.yaml"  # monthly signals: held 3 months
 # October 15 batch: timely value (current price, held 3 months) + the two additions that
 # worked on the annual strategy (payout yield, innovation ability); baselines: the final
 # annual strategy and its two best annual variants
-IDEAS = ["qvi_timely", "qvi_timely_payout", "qvi_timely_innov", "qvi_timely_best"]
-BASELINES = ["qvi_intan_full", "qvi_payout", "qvi_innov"]
+IDEAS = ["qvi_timely"]
+BASELINES = ["qvi_intan_full"]
 
 
 def config_for(signal: str) -> str:
