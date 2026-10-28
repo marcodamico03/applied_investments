@@ -3,8 +3,8 @@ Year-by-year performance of the final strategy as a real portfolio.
 
 Run from the project folder, after run_signal.py for the signal (it reads whatever
 that run saved in results/signals/<signal>/):
-    python scripts/yearly_performance.py                     (final strategy, qvi_intan_full)
-    python scripts/yearly_performance.py --signal quality_value_industry
+    python scripts/yearly_performance.py                     (final strategy, qvi_timely)
+    python scripts/yearly_performance.py --signal qvi_intan_full
 
 Three portfolios, value-weighted, 1963-07 to 2015-12 (the holdout is never read):
   long_short   a market-neutral fund: the cash sits in T-bills and earns rf, on top
@@ -42,7 +42,7 @@ def read(path):
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--signal", default="qvi_intan_full")
+    ap.add_argument("--signal", default="qvi_timely")
     args = ap.parse_args()
     m = importlib.import_module(f"src.signals.{args.signal}")
     L, S = str(m.LONG), str(m.SHORT)

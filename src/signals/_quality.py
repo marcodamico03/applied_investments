@@ -1,5 +1,5 @@
 """
-Helpers for the quality and value signals (value_composite, cash_op).
+Helpers for the annual value and quality scores (universe, December market equity, ranks).
 
 - universe_june(panel):  (PERMNO, formation_year) pairs with a positive market cap
                          at the end of June t, i.e. the stocks the sort can use.

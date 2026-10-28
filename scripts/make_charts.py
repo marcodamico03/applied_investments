@@ -2,8 +2,8 @@
 Charts of the strategy against the US market, like the regime-monitor page.
 
 Run from the project folder, after run_signal.py for the signal you want:
-    python scripts/make_charts.py                          # the final strategy, qvi_intan_full
-    python scripts/make_charts.py --signal quality_value_industry
+    python scripts/make_charts.py                          # the final strategy, qvi_timely
+    python scripts/make_charts.py --signal qvi_intan_full
 
 Writes to results/charts/:
     performance.html     interactive page: growth of $100 (log scale) with hover, period
@@ -240,7 +240,7 @@ def html(df: pd.DataFrame, out: Path) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--signal", default="qvi_intan_full")
+    ap.add_argument("--signal", default="qvi_timely")
     args = ap.parse_args()
     df = build(args.signal)
     df.attrs["signal"] = args.signal

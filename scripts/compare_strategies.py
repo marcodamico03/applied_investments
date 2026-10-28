@@ -1,22 +1,18 @@
 """
-Fast strategy search: backtest several signals in parallel with configs/fast.yaml and
-write one comparison table.
+Compare the final strategy (qvi_timely, monthly signal, portfolios formed every
+3 months) with its annual version (qvi_intan_full, sorted once a year in June):
+both are backtested in parallel, then one comparison table is written.
 
-    python scripts/run_fast.py                          # the qvi_* ideas + the 2 baselines
-    python scripts/run_fast.py --signals qvi_intensity
-    python scripts/run_fast.py --workers 3              # signals run at the same time
-    python scripts/run_fast.py --summary-only           # only rebuild the table
+    python scripts/compare_strategies.py
+    python scripts/compare_strategies.py --workers 1          # less memory
+    python scripts/compare_strategies.py --summary-only       # only rebuild the table
 
-Why it is faster than run_roberto.py / run_all.py, with the same results:
-  - configs/fast.yaml: same data, universe, costs and timing as strategies.yaml, but
-    5 factor models and 4 robustness variants (each variant is a full backtest)
-  - several signals run at the same time (--workers, default 2; each one needs a few
-    GB of memory, so do not go above 3-4 on a laptop)
-Results: results/signals/<signal>/ as usual (overwritten by the next run of that
-signal) and a copy in results/fast/<signal>/; logs in results/fast/logs/; the
-comparison in results/fast/summary.txt (and .csv).
+Each signal runs with its own config: configs/final.yaml for monthly signals,
+configs/annual.yaml for annual ones (same sample, universe and trading costs).
+Results: results/signals/<signal>/ as usual and a copy in results/compare/<signal>/;
+logs in results/compare/logs/; the table in results/compare/summary.txt (and .csv).
 
-Summary, value-weighted and equal-weighted long-short spread (10-1):
+Table, value-weighted and equal-weighted long-short spread (10-1):
   gross and net mean (% per month, t) for 1963-2015, 1963-1994, 1995-2015, 2005-2015
   and by decade; gross and net alphas (Newey-West t, 6 lags) against CAPM, FF5, FF6,
   q5 and q5+STR for the four main periods; net q5 alpha in the robustness universes.
@@ -38,20 +34,16 @@ sys.path.insert(0, str(BASE_DIR))
 
 from src.evaluation.alpha import load_factors, regress  # noqa: E402
 
-CONFIG = "configs/fast.yaml"                  # annual signals
-CONFIG_MONTHLY = "configs/fast_quarterly.yaml"  # monthly signals: held 3 months + variants
-# October 15 batch: timely value (current price, held 3 months) + the two additions that
-# worked on the annual strategy (payout yield, innovation ability); baselines: the final
-# annual strategy and its two best annual variants
-IDEAS = ["qvi_timely"]
-BASELINES = ["qvi_intan_full"]
+CONFIG = "configs/annual.yaml"         # annual signals
+CONFIG_MONTHLY = "configs/final.yaml"  # monthly signals
+SIGNALS = ["qvi_timely", "qvi_intan_full"]
 
 
 def config_for(signal: str) -> str:
-    """configs/fast_monthly.yaml for monthly signals, configs/fast.yaml otherwise."""
+    """configs/final.yaml for monthly signals, configs/annual.yaml otherwise."""
     from src.signals import load_signal
     return CONFIG_MONTHLY if load_signal(signal).REBALANCE == "monthly" else CONFIG
-OUT = BASE_DIR / "results" / "fast"
+OUT = BASE_DIR / "results" / "compare"
 MAIN_PERIODS = {"1963-2015": ("1963-07", "2015-12"), "1963-1994": ("1963-07", "1994-12"),
                 "1995-2015": ("1995-01", "2015-12"), "2005-2015": ("2005-01", "2015-12")}
 DECADES = {"1960s": ("1963-07", "1969-12"), "1970s": ("1970-01", "1979-12"),
@@ -150,7 +142,7 @@ def pretty(table: pd.DataFrame) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--signals", nargs="+", default=IDEAS + BASELINES)
+    ap.add_argument("--signals", nargs="+", default=SIGNALS)
     ap.add_argument("--workers", type=int, default=2)
     ap.add_argument("--summary-only", action="store_true")
     args = ap.parse_args()
@@ -159,11 +151,11 @@ def main() -> None:
     if not args.summary_only:
         print(f"Backtesting {len(args.signals)} signals ({CONFIG} for annual, {CONFIG_MONTHLY} for "
               f"monthly ones), {args.workers} at a time "
-              f"(logs in results/fast/logs/)...")
+              f"(logs in results/compare/logs/)...")
         failed = []
         with ThreadPoolExecutor(max_workers=args.workers) as pool:
             for signal, code in pool.map(run_one, args.signals):
-                print(f"  {signal:28s} {'ok' if code == 0 else 'FAILED (see results/fast/logs/' + signal + '.txt)'}",
+                print(f"  {signal:28s} {'ok' if code == 0 else 'FAILED (see results/compare/logs/' + signal + '.txt)'}",
                       flush=True)
                 if code:
                     failed.append(signal)
@@ -173,9 +165,9 @@ def main() -> None:
     table = summarise(args.signals)
     table.to_csv(OUT / "summary.csv")
     text = pretty(table)
-    (OUT / "summary.txt").write_text(f"Fast comparison ({CONFIG}), 1963-2015 (holdout not used)\n{text}\n")
+    (OUT / "summary.txt").write_text(f"Final vs annual strategy, 1963-2015 (holdout not used)\n{text}\n")
     print(text)
-    print(f"\nSaved results/fast/summary.txt and summary.csv")
+    print(f"\nSaved results/compare/summary.txt and summary.csv")
 
 
 if __name__ == "__main__":

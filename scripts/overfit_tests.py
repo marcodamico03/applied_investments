@@ -4,7 +4,7 @@ and kept the best)? Three tests, 1963-07 to 2015-12 (the holdout is never read).
 
 Run from the project folder, after the backtest of the signal with its config
 (results/signals/<signal>/):
-    python scripts/overfit_tests.py                         (qvi_timely, fast_quarterly)
+    python scripts/overfit_tests.py                         (qvi_timely, configs/final.yaml)
     python scripts/overfit_tests.py --quick                 (only C, no backtests: a few seconds)
     python scripts/overfit_tests.py --n-placebo 50 --n-splits 5
 
@@ -21,7 +21,7 @@ C. NEIGHBOURS         the strategy with the parameters around the chosen ones (h
                       6 months, buffer, large caps, all stocks) from robustness.csv:
                       a real signal does not depend on one precise parameter.
 The last, decisive test is the holdout 2016-2025: run ONCE, after freezing the rules
-(python scripts/run_signal.py --signal qvi_timely --config configs/fast_quarterly.yaml --holdout).
+(python scripts/run_signal.py --signal qvi_timely --config configs/final.yaml --holdout).
 Output: results/overfit/<signal>/ (csv tables and summary.txt).
 """
 import argparse
@@ -179,7 +179,7 @@ def neighbours(signal, lines):
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--signal", default="qvi_timely")
-    ap.add_argument("--config", default="configs/fast_quarterly.yaml")
+    ap.add_argument("--config", default="configs/final.yaml")
     ap.add_argument("--n-placebo", type=int, default=20)
     ap.add_argument("--n-splits", type=int, default=3)
     ap.add_argument("--quick", action="store_true", help="no backtests: only C")

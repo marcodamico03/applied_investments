@@ -10,7 +10,7 @@ Stevens 2000; Cohen and Polk 1998). Removing the industry bet should give a
 smoother value sleeve that the HML factor (which keeps the industry bet) does not
 fully explain.
 
-Same four ratios as value_composite.py (fiscal year ending in t-1, ME of December t-1):
+Four cheapness ratios (fiscal year ending in t-1, ME of December t-1):
     be/ME, ib/ME, (ib + dp)/ME, oibdp/EV
 Rule fixed in advance, from textbook valuation practice (no data fitting):
     Financials (FF12 "Money", SIC 6000-6999): only be/ME and ib/ME, because for banks
@@ -46,7 +46,7 @@ def value_industry_year(panel: pd.DataFrame, scheme: str = "ff12", intangible: b
     scheme: "ff12" (main) or "ff49" (robustness).
     intangible = True: the book value in book/price is the intangible-adjusted book of
     Eisfeldt, Kim and Papanikolaou (2022): be - goodwill + knowledge capital + organisation
-    capital (src/signals/_intangibles.py). Used by quality_value_industry_intan.py."""
+    capital (src/signals/_intangibles.py). Used by _qvi_plus.py."""
     a = yearly(panel, COMPUSTAT_COLS)
     book = a["be"]
     if intangible:

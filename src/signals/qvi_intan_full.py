@@ -1,6 +1,8 @@
 """
-Idea 1: QVI with intangibles everywhere. Roberto's quality_value_industry with
-  - value:   book value adjusted for intangibles (as quality_value_industry_intan)
+Annual version of the final strategy (compared with qvi_timely in
+scripts/compare_strategies.py). Sorted once a year, at the end of June t, with the
+accounts of fiscal year t-1 and the market equity of December t-1:
+  - value:   four cheapness ratios, book value adjusted for intangible capital
   - quality: cash profitability adjusted for intangibles (organisation-capital
              investment added back, intangible capital added to assets)
 Both ranked within FF12 industries, 50/50. Details in _qvi_plus.py.

@@ -4,10 +4,9 @@ market? (docs/STRATEGY.md, section 4)
 
 Run from the project folder, after run_signal.py for the signal, with the config whose
 results you want to analyse (results/signals/<signal>/ holds the LAST run):
-    python scripts/run_signal.py --signal qvi_intan_full --config configs/strategies.yaml
-    python scripts/analyse_strategy.py                     (final strategy, no microcaps)
-    python scripts/analyse_strategy.py --signal quality_value_industry --config configs/fast.yaml
-    python scripts/analyse_strategy.py --signal qvi_timely --config configs/fast_quarterly.yaml
+    python scripts/run_signal.py --signal qvi_timely --config configs/final.yaml
+    python scripts/analyse_strategy.py                     (final strategy, qvi_timely)
+    python scripts/analyse_strategy.py --signal qvi_intan_full --config configs/annual.yaml
 
 Uses the value-weighted spread AFTER costs (long decile 10, short decile 1), 1963-07 to
 2015-12; the holdout is never read.
@@ -79,8 +78,8 @@ def recession_mask(index: pd.PeriodIndex) -> pd.Series:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--signal", default="qvi_intan_full")
-    ap.add_argument("--config", default="configs/strategies.yaml")
+    ap.add_argument("--signal", default="qvi_timely")
+    ap.add_argument("--config", default="configs/final.yaml")
     args = ap.parse_args()
     cfg = yaml.safe_load((BASE_DIR / args.config).read_text())
     train, valid = cfg["periods"]["train"], cfg["periods"]["validation"]

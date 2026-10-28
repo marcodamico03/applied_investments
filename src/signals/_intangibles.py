@@ -1,6 +1,6 @@
 """
-Intangible capital of each firm, one value per (PERMNO, formation_year), shared by
-intangible_value.py, intangible_profit.py and intangible_qv.py.
+Intangible capital of each firm, one value per (PERMNO, formation_year), used by
+the value and quality scores of the strategy (_qvi_plus.py, _qvi_ext.py).
 
 Accounting expenses most investment in intangibles: R&D and the part of SG&A that
 builds brands, customer relationships, organisation and human capital. So book

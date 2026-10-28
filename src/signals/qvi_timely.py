@@ -1,10 +1,14 @@
 """
-qvi_intan_full with timely prices (Asness and Frazzini 2013, "The devil in HML's
-details"): the cheapness ratios use the market equity of the current month instead of
-December t-1, so a stock that has fallen becomes cheaper at once instead of up to 18
-months later. Accounting data unchanged (fiscal year t-1, from July t). Ranked within
-(month, FF12 industry) every month. They find the timely version much better, above
-all next to momentum. Run with configs/fast_monthly.yaml (hold/buffer variants).
+FINAL STRATEGY (docs/STRATEGY.md): cheap and cash-profitable stocks within their
+industry, with intangible capital counted, at current prices.
+
+Same value + quality score as qvi_intan_full, but the cheapness ratios use the market
+equity of the current month instead of December t-1 (Asness and Frazzini 2013, "The
+devil in HML's details"), so a stock that has fallen becomes cheaper at once instead
+of up to 18 months later. Accounting data unchanged (fiscal year ending in t-1, used
+from July t). Ranked within (month, FF12 industry); built in _qvi_ext.py.
+Portfolios formed every 3 months (configs/final.yaml):
+    python scripts/run_signal.py --signal qvi_timely --config configs/final.yaml
 """
 import pandas as pd
 

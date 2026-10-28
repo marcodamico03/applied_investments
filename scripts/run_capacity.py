@@ -3,10 +3,10 @@ Capacity: how much money can the strategy run before trading costs eat the alpha
 (docs/STRATEGY.md)
 
 Run from the project folder:
-    python scripts/run_capacity.py                                   (final strategy, no microcaps)
-    python scripts/run_capacity.py --config configs/default.yaml     (all stocks)
-    python scripts/run_capacity.py --signal quality_value_industry
-    python scripts/run_capacity.py --signal qvi_timely --config configs/fast_quarterly.yaml --scenarios
+    python scripts/run_capacity.py                 (final strategy: $100m to $2.5bn per side)
+    python scripts/run_capacity.py --scenarios     (cost model: spread only, sqrt impact,
+                                                    $10m to $2.5bn, 5 days to trade)
+    python scripts/run_capacity.py --signal qvi_intan_full --config configs/annual.yaml
                                    (cost-model sensitivity: spread only, sqrt impact, $10m-$2.5bn)
 
 Same backtest as run_signal.py (same universe, sort, spread and price-impact model);
@@ -52,8 +52,8 @@ pd.set_option("display.float_format", lambda x: f"{x:.2f}")
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--signal", default="qvi_intan_full")
-    ap.add_argument("--config", default="configs/strategies.yaml")
+    ap.add_argument("--signal", default="qvi_timely")
+    ap.add_argument("--config", default="configs/final.yaml")
     ap.add_argument("--scenarios", action="store_true",
                     help="cost-model sensitivity (spread only, sqrt impact, $10m..$2.5bn, 5 days) "
                          "instead of the fund sizes only")

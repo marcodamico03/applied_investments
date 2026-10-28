@@ -1,53 +1,82 @@
-# applied_investments
+# Industry-relative value and quality with intangible capital
 
-Run every command from the project folder. Install the packages once with
+A long-short US equity strategy built for the Applied Investments course (MSc Finance,
+HEC Lausanne, fall 2026): buy the stocks that are cheap for their industry and generate
+real cash, once the accounts are corrected for intangible investment, and short the
+opposite. Tested on CRSP/Compustat 1963-2025 against the CAPM, Fama-French and q-factor
+models, after realistic trading costs, with 2016-2025 kept as an untouched holdout.
+
+**Headline (value-weighted, net of trading costs, % per month, t-stat):**
+
+| | 1963-2015 (research) | 2016-2025 (holdout, run once) |
+|---|---|---|
+| Net return | 0.33 (2.6) | 0.73 (2.2) |
+| Fama-French 6-factor alpha | 0.53 (3.8) | 0.75 (2.7) |
+| q5 alpha (Hou, Mo, Xue and Zhang) | 0.41 (2.6) | 0.58 (2.4) |
+
+The rules, the reasoning, every result and the limits are in
+[docs/STRATEGY.md](docs/STRATEGY.md).
+
+## Project structure
+
+```
+configs/
+  final.yaml            settings of the final strategy (sample, universe, costs, robustness)
+  annual.yaml           settings of the annual version used for comparison
+  default.yaml          settings for the replication of published anomalies
+src/
+  data/                 cleaning of the WRDS files, trading-cost inputs, factor data
+  signals/              one file per signal
+    qvi_timely.py       THE FINAL STRATEGY (built in _qvi_ext.py)
+    qvi_intan_full.py   its annual version (built in _qvi_plus.py)
+    asset_growth.py, book_to_market.py, momentum.py
+                        published anomalies, used to check the pipeline
+    _*.py               helpers: industries, intangible capital, value and quality scores
+  portfolio/            portfolio sorts and the trading-cost model
+  evaluation/           factor-model regressions and performance statistics
+scripts/
+  run_signal.py         backtest one signal (portfolios, costs, alphas, robustness)
+  run_final_analysis.py every analysis of the final strategy in one command
+  analyse_strategy.py   luck (bootstrap), dependence on a few years, crises, overlay
+  run_capacity.py       fund size and cost-model sensitivity
+  overfit_tests.py      placebo, random half universes, neighbouring parameters
+  yearly_performance.py year-by-year returns as a fund
+  make_charts.py        interactive chart (results/charts/performance.html)
+  compare_strategies.py final strategy vs its annual version
+  run_asset_growth.py   reproduces the professor's asset-growth numbers
+  validate_signal.py    compares a signal's portfolios with Ken French's
+holdout_log.txt         every use of the 2016-2025 holdout
+```
+
+## How to run
+
+Run every command from the project folder. Python 3.10+, then once:
 `pip install -r requirements.txt`.
 
-To run everything below (except the holdout) in one go: `python scripts/run_all.py`
-(`--signals momentum` for just some signals, `--skip-clean` to reuse the cleaned data,
-`--final` for only our final strategies: the list `final_signals` in
-`configs/strategies.yaml`).
+1. **Data (once).** The CRSP and Compustat files come from WRDS (licensed, not in git).
+   Put `crsp_monthly.csv`, `ccm_funda.csv` and `crsp_daily.csv` in `data/raw/`, then:
+   ```
+   python convert_to_parquet.py crsp_daily.csv
+   python src/data/clean.py
+   ```
+   The factor file `data/external/factors_monthly.csv` is in git (public Fama-French and
+   q-factor data), so every run uses the same vintage.
+2. **Check the pipeline.**
+   ```
+   python scripts/run_asset_growth.py                     # professor's numbers
+   python scripts/validate_signal.py --signal momentum    # vs Ken French's portfolios
+   ```
+3. **Final strategy, everything.**
+   ```
+   python scripts/run_final_analysis.py
+   python scripts/compare_strategies.py
+   ```
 
-To pick any single step from a menu instead of typing the command:
-`python scripts/menu.py` (it shows the exact command before running it). The menu
-reads the signals from `src/signals/`, the configs from `configs/` and the final
-strategies from `final_signals` in `configs/strategies.yaml`, so a new or changed
-signal shows up without touching the menu's code.
+**Holdout discipline.** The years from 2016 are fixed as holdout in `scripts/run_signal.py`
+(`HOLDOUT_START`): without `--holdout` every period is cut at 2015-12, whatever the config
+says. Each `--holdout` run is recorded in `holdout_log.txt`. The holdout of the final
+strategy has been run once.
 
-## Once: data
-1. Put the WRDS files in `data/raw/` (`crsp_monthly.csv`, `ccm_funda.csv`,
-   `crsp_daily.csv`), then `python convert_to_parquet.py crsp_daily.csv` (the daily
-   file is too big to read as CSV; the bid and ask quotes give the trading costs).
-2. `python src/data/clean.py` writes the cleaned tables to `data/interim/`.
-3. `python scripts/run_asset_growth.py` must reproduce the professor's numbers
-   (slides 18-27). Rerun it after any change to `clean.py`.
+## Team
 
-The factor file `data/external/factors_monthly.csv` is in git, so the whole team
-uses the same vintage. Only rebuild it on purpose (`python src/data/factors.py`).
-
-## For each signal
-1. Add `src/signals/<name>.py`: copy `asset_growth.py` (accounting data) or
-   `momentum.py` (market data) and change the formula. The rules are in
-   `src/signals/__init__.py`. The signal is in the menu and in `run_all.py` at once;
-   to make it a final strategy, add its name to `final_signals` in
-   `configs/strategies.yaml`.
-2. For a published anomaly, compare it with Ken French's portfolios:
-   `python scripts/validate_signal.py --signal <name>`
-3. Backtest on train + validation:
-   `python scripts/run_signal.py --signal <name>`
-   This gives portfolio returns, the spread before and after trading costs,
-   alphas for CAPM, FF3-FF6 and q4/q5, the GRS test, and the same spread in other
-   universes (no microcaps, price above $5, no financials/utilities).
-   Trading costs (`costs` in the config): every trade pays half the stock's closing
-   bid-ask spread on the last trading day of the month (the formation date) plus a
-   price impact, larger for small stocks and big trades (professor's slides 21-24,
-   `src/portfolio/costs.py`). CRSP has NYSE/AMEX quotes only from the end of 1992:
-   before, their spread is estimated from size, price, volatility and the NASDAQ
-   quotes of the same year (`src/data/cost_inputs.py`), so the net results cover
-   the whole sample.
-   Settings are in `configs/default.yaml`; results go to `results/signals/<name>/`.
-4. Once, at the very end, when the signal and the config are frozen:
-   `python scripts/run_signal.py --signal <name> --holdout`
-   The holdout (2016-01 on) is fixed in `scripts/run_signal.py`, not in the configs:
-   without `--holdout` every period is cut at 2015-12, whatever the config says.
-   Each `--holdout` run adds a line to `holdout_log.txt`: commit it.
+Marco D'Amico, Roberto Berardi, Cedric Nim.

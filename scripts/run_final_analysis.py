@@ -8,7 +8,7 @@ Run from the project folder (data/interim/ must exist):
     python scripts/run_final_analysis.py --quick-overfit    # overfitting tests without backtests
 
 Steps (each output also saved in results/final/logs/<step>.txt):
-  backtest    run_signal.py with configs/fast_quarterly.yaml: EW and VW, all factor
+  backtest    run_signal.py with configs/final.yaml: EW and VW, all factor
               models, train / validation / last 30 / last 20 years, robustness
               (all stocks, large caps, hold 1 / 6 months, buffer)
   analyse     analyse_strategy.py: luck (bootstrap, t > 3), one year? (without the best years, 2008, recessions,
@@ -28,7 +28,7 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 SIGNAL = "qvi_timely"
-CONFIG = "configs/fast_quarterly.yaml"
+CONFIG = "configs/final.yaml"
 LOGS = BASE_DIR / "results" / "final" / "logs"
 
 
