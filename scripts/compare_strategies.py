@@ -1,7 +1,12 @@
 """
-Compare the final strategy (qvi_timely, monthly signal, portfolios formed every
-3 months) with its annual version (qvi_intan_full, sorted once a year in June):
-both are backtested in parallel, then one comparison table is written.
+Build the final strategy one correction at a time (Table 5 of the paper): every
+building block is backtested in parallel with the same universe, costs and sample,
+then one comparison table is written.
+    quality_value                 value + quality, ranked across all stocks
+    quality_value_industry        + ranked within industries
+    quality_value_industry_intan  + intangible capital in book value
+    qvi_intan_full                + intangible capital in profitability (annual version)
+    qvi_timely                    + current prices, formed every 3 months (FINAL)
 
     python scripts/compare_strategies.py
     python scripts/compare_strategies.py --workers 1          # less memory
@@ -36,7 +41,9 @@ from src.evaluation.alpha import load_factors, regress  # noqa: E402
 
 CONFIG = "configs/annual.yaml"         # annual signals
 CONFIG_MONTHLY = "configs/final.yaml"  # monthly signals
-SIGNALS = ["qvi_timely", "qvi_intan_full"]
+# the final strategy and its building blocks (Table 5 of the paper), simplest first
+SIGNALS = ["quality_value", "quality_value_industry", "quality_value_industry_intan",
+           "qvi_intan_full", "qvi_timely"]
 
 
 def config_for(signal: str) -> str:

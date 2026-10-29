@@ -1,7 +1,7 @@
 """
-Annual version of the final strategy (compared with qvi_timely in
-scripts/compare_strategies.py). Sorted once a year, at the end of June t, with the
-accounts of fiscal year t-1 and the market equity of December t-1:
+Building block 4 of the final strategy (Table 5 of the paper): its annual version.
+Sorted once a year, at the end of June t, with the accounts of fiscal year t-1 and
+the market equity of December t-1:
   - value:   four cheapness ratios, book value adjusted for intangible capital
   - quality: cash profitability adjusted for intangibles (organisation-capital
              investment added back, intangible capital added to assets)

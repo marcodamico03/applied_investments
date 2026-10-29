@@ -2,7 +2,7 @@
 Every result of the FINAL strategy (qvi_timely, sorted every 3 months) in one command.
 
 Run from the project folder (data/interim/ must exist):
-    python scripts/run_final_analysis.py                    # everything (about 1-2 hours)
+    python scripts/run_final_analysis.py                    # everything (about 2 hours)
     python scripts/run_final_analysis.py --skip-backtest    # reuse results/signals/qvi_timely/
     python scripts/run_final_analysis.py --only overfit     # one step (names below)
     python scripts/run_final_analysis.py --quick-overfit    # overfitting tests without backtests
@@ -18,6 +18,10 @@ Steps (each output also saved in results/final/logs/<step>.txt):
   yearly      yearly_performance.py: every year, long-short vs long-only vs market
   charts      make_charts.py: results/charts/performance.html
   overfit     overfit_tests.py: placebo, random half universes, neighbouring parameters
+  compare     compare_strategies.py: the building blocks of the strategy (Table 5)
+  legs        describe_legs.py: what the long and short legs hold (Table 2, Figure 1)
+  paper       paper_outputs.py: tables and figures of the paper (paper/tables, paper/figures);
+              needs the holdout run once (run_signal.py ... --holdout)
 The holdout (2016-2025) is never run here.
 """
 import argparse
@@ -29,6 +33,8 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 SIGNAL = "qvi_timely"
 CONFIG = "configs/final.yaml"
+# building blocks of the final strategy (Table 5 of the paper); the final one is the backtest step
+BLOCKS = ["quality_value", "quality_value_industry", "quality_value_industry_intan", "qvi_intan_full"]
 LOGS = BASE_DIR / "results" / "final" / "logs"
 
 
@@ -45,6 +51,9 @@ def steps(args) -> dict:
         "yearly": ["yearly_performance.py", *s],
         "charts": ["make_charts.py", *s],
         "overfit": overfit,
+        "compare": ["compare_strategies.py", "--signals", *BLOCKS],
+        "legs": ["describe_legs.py"],
+        "paper": ["paper_outputs.py"],
     }
 
 
