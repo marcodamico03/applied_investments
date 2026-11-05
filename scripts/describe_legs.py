@@ -41,6 +41,7 @@ from src.signals._qvi_ext import intangible_capital  # noqa: E402
 from src.signals.momentum import momentum  # noqa: E402
 
 SIGNAL, CONFIG = "qvi_timely", "configs/final.yaml"
+FIRST_FORMATION = "1963-06"  # first portfolios held in July 1963, as in the backtest
 LAST_FORMATION = "2015-11"   # held in 2015-12 at the latest: no holdout month
 OUT = BASE_DIR / "results" / "paper"
 INDUSTRY_NAMES = {"NoDur": "Consumer non-durables", "Durbl": "Consumer durables", "Manuf": "Manufacturing",
@@ -60,8 +61,9 @@ def main() -> None:
     print("Sorting...", flush=True)
     res = sort_portfolios(panel, SIGNAL, rebalance=spec.REBALANCE, **opts)
     a = res["assignments"]
+    first = pd.Period(FIRST_FORMATION, freq="M")
     last = pd.Period(LAST_FORMATION, freq="M")
-    a = a[a["form_key"] <= last.year * 12 + last.month - 1]
+    a = a[(a["form_key"] >= first.year * 12 + first.month - 1) & (a["form_key"] <= last.year * 12 + last.month - 1)]
 
     # characteristics of every stock-month, then the formation rows only
     me = (panel["me_firm"] / 1000).where(panel["me_firm"] > 0)          # $ millions
